@@ -1,0 +1,54 @@
+
+You will need:
+
+Gambit 14.0 or newer
+	http://www.gambit-project.org/
+
+JQ (Json viewer) 1.5 or newer
+	https://stedolan.github.io/jq/
+
+GameAnalysis library
+	https://github.com/egtaonline/gameanalysis
+
+###
+
+How to download game payoff data:
+Click on "Download JSON" in the game page on EGTA-Online.
+
+Game summary will be called something like "879-summary.json".
+
+###
+
+How to pretty-print game payoff data:
+
+	jq < 879-summary.json .
+
+###
+
+How to convert game payoff data to "game analysis format":
+
+	/usr/local/lib/python2.7/site-packages/GameAnalysis/./ga conv < 879-summary.json > 879-ga.json
+
+To view result:
+
+	jq < 879-ga.json .
+
+###
+
+To solve for Nash equilibria:
+
+	python gambitSolve.py 879-ga.json
+
+Pure strategy Nash equilibria:
+
+Mixed strategy Nash equilibria:
+Mixed equilibrium:
+defender
+	0.055846866	ALWAYS_MOVE_DEFENDER:sMaxP_10_moveBA_0
+	0.7404629768	FULL_DEFENDER:sMaxP_20_blkThr_0.95_movePr_0_mrSpTd_0.1_byCount. . .
+	0.2036901572	SPREAD_DEFENDER:sMaxP_20
+attacker
+	0.5325894586	FULL_ATTACKER:maxBots_40_maxProxiesHit_10_probAddKnown_0.3
+	0.1758490697	FULL_ATTACKER:maxBots_40_maxProxiesHit_20_probAddKnown_0.3
+	0.2915614718	NAIVE_ATTACKER:maxBots_40_maxProxiesHit_10
+
