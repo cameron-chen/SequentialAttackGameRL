@@ -22,12 +22,12 @@ class Distribution_Estimator(nn.Module):
         self.bn = nn.BatchNorm2d(1000)
         self.conv2 = nn.Conv2d(1000, 1000, round((num_feat+1)/4), 2)
         self.ln = nn.Linear(2000, 1000)
-        self.softmax = nn.Softmax(0)
+        self.sig = nn.Sigmoid()
 
     def forward(self, x):
         x = self.bn(self.conv1(x))
         x = self.bn(self.conv2(x))
-        x = self.softmax(self.ln(x.view(-1)))
+        x = self.sig(self.ln(x.view(-1)))
         return x
 
 

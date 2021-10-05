@@ -15,28 +15,35 @@ import configuration as config
 
 def get_action(act):
     action = torch.zeros((act.size()))
-    for i, res in enumerate(act):
+    act_code = []
+    for i,res in enumerate(act):
         idx = (res == max(res)).nonzero()[0].item()
         action[i][idx] = 1
-
-    return action
+        act_code.append(idx)
+    
+    return action, tuple(act_code)
 
 
 def dist_est(act_estimates):
     act_dist = {}
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    actions = []
+    codes = []
     for act in act_estimates:
-        action = get_action(act)
-        if action in act_dist.keys():
-            act_dist[action] += 1
+        action, act_code = get_action(act)
+        if act_code in act_dist.keys():
+            act_dist[act_code] += 1
         else:
-            act_dist[action] = 1
+            act_dist[act_code] = 1
+        actions.append(action)
+        codes.append(act_code)
 
-    actions = [action for (action, count) in act_dist.items()]
-    act_probs = torch.tensor([count/len(actions) for (action, count) in act_dist.items()], device=device)
+    act_probs = []
+    for c in codes:
+        act_probs.append(act_dist[c]/len(actions))
 
-    return actions, act_probs, act_dist
+    return actions, torch.tensor(act_probs, device=device), act_dist
 
 
 class Def_Action_Generator(nn.Module):

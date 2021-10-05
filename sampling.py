@@ -178,9 +178,8 @@ def convert_to_real(next_loc):
     for i,res in enumerate(next_loc):
         idx = (res == 1).nonzero()[0].item()
         next_loc[i] = torch.where(res != 0, res, torch.rand(num_targ).to(device))
-        res[idx] = torch.rand(1)
-        while res[idx] < max(res):
-            res[idx] = torch.rand(1)
+        res[idx] = 0
+        res[idx] = max(res) + (1-max(res))*torch.rand(1).to(device)
 
     return next_loc
 
