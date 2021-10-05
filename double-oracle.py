@@ -213,6 +213,7 @@ while not converge:
     print("\nAttacker Oracle Utility:\t", att_u_ub[-1])
     print("Attacker Nash Utility:\t", att_u_nash[-1])
 
+    # Check for convergence
     if def_u_ub[-1] < def_u_nash[-1] + 0.01 and att_u_ub[-1] < att_u_nash[-1] + 0.01:
         if iter > 10:
             print('Oracles have converged.')

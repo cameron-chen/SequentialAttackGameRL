@@ -101,15 +101,16 @@ class DefDiscriminator(object):
 
     def train(self, option='CNN', test=None):
         print("Generating Training Data...")
-        train_set, samples = self.gen_data(sample_size=5000)
+        train_set, samples = self.gen_data(sample_size=7500)
         print("\nGenerating Testing Data...")
-        test_set, samples = self.gen_data(sample_size=1000, samples=samples)
+        test_set, samples = self.gen_data(sample_size=1500, samples=samples)
 
         if option == 'CNN':
             disc = Def_Disc_CNN(self.num_targ, self.num_res).to(self.device)
         elif option == 'GCN':
             disc = Def_Disc_GCN(self.num_targ, self.num_res, self.norm_adj_matrix).to(device)
-        disc_optim = torch.optim.Adam(disc.parameters(), lr=0.001)
+        lr = 0.001
+        disc_optim = torch.optim.Adam(disc.parameters(), lr=lr)
         criterion = nn.BCELoss()
 
         loss_plot = []
@@ -136,6 +137,9 @@ class DefDiscriminator(object):
                 loss_plot.append(running_loss / ((epoch * len(train_set)) + (i + 1)))
                 if i % (len(train_set) / 10) == (len(train_set) / 10) - 1:
                     print("Sample %d -- Average Loss: %f" % (i + 1, loss_plot[-1]))
+                    lr = lr * 0.99
+                    for param_group in disc_optim.param_groups:
+                        param_group['lr'] = lr
 
             print("\nTesting model...")
             correct = 0
@@ -149,7 +153,7 @@ class DefDiscriminator(object):
             print("%d correctly predicted out of %d samples" % (correct, len(test_set)))
 
             if correct <= top_correct:
-                if limit > 0:
+                if limit > 1:
                     print(top_correct)
                     print(limit)
                     limit -= 1

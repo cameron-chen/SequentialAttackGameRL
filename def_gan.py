@@ -49,7 +49,7 @@ def dist_est(act_estimates):
 class Def_Action_Generator(nn.Module):
     def __init__(self, device):
         super(Def_Action_Generator, self).__init__()
-        self.l1 = nn.Linear(200, 150)
+        self.l1 = nn.Linear(320, 150)
         self.l2 = nn.Linear(150, 100)
         self.l3 = nn.Linear(100, 50)
         self.bn = nn.BatchNorm1d(10)
@@ -58,7 +58,7 @@ class Def_Action_Generator(nn.Module):
         self.device = device
 
     def forward(self, x):
-        noise = torch.rand(40).to(self.device)
+        noise = torch.rand(240).to(self.device)
         x = torch.cat((x, noise))
         x = self.relu(self.l1(x))
         x = self.relu(self.l2(x))
@@ -68,7 +68,7 @@ class Def_Action_Generator(nn.Module):
 
 class Def_A2C_GAN(nn.Module):
     def __init__(self, payoff_matrix, adj_matrix, norm_adj_matrix, num_feature,
-                 num_resource, def_constraints, discriminator, def_gen, device):
+                 num_resource, def_constraints, discriminator, device):
         super(Def_A2C_GAN, self).__init__()
         self.payoff_matrix = payoff_matrix
         self.adj_matrix = adj_matrix
@@ -89,13 +89,13 @@ class Def_A2C_GAN(nn.Module):
 
         self.ln1 = nn.Linear(16, 8)
 
-        self.ln_value1 = nn.Linear(16 * self.num_target, 32)
+        self.ln_value1 = nn.Linear(8 * self.num_target, 32)
         self.ln_value2 = nn.Linear(32, 1)
 
         self.dropout = nn.Dropout(0.25)
         self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
-        self.act_gen = def_gen
+        self.act_gen = Def_Action_Generator(device)
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
     def forward(self, state, def_cur_loc):
@@ -106,8 +106,8 @@ class Def_A2C_GAN(nn.Module):
         x = self.relu(self.bn(self.gc1(x, self.norma_adj_matrix)))
         x = self.dropout(x)
         x = self.relu(self.bn(self.gc2(x, self.norma_adj_matrix)))
-        # x = self.relu(self.ln1(x))
-        x = x.view(-1, 16 * self.num_target)
+        x = self.relu(self.ln1(x))
+        x = x.view(-1, 8 * self.num_target)
 
         # Value
         state_value = self.relu(self.ln_value1(x))
@@ -156,6 +156,7 @@ class Def_A2C_GAN(nn.Module):
                 print("\n#", attempt)
                 print("Invalid Samples:", invalid_count)
                 print("Loss:", disc_loss.item())
+                print("Action Count:", len(act_dist.values()))
                 disc_loss.backward() # retain_graph=True)
                 gen_optimizer.step()
 
@@ -171,7 +172,7 @@ class Def_A2C_GAN(nn.Module):
                 param_group['lr'] = lr
             '''
 
-            if attempt % 25 == 0 or action_generated:
+            if action_generated:
                 plt.figure(figsize=(20, 10))
                 plt.title("# of Invalid Samples")
                 plt.xlabel("Attempt")
@@ -226,11 +227,10 @@ if __name__ == '__main__':
     for i in range(100):
         start = time.time()
         print("\nGAN", i + 1)
-        def_gen = Def_Action_Generator(device).to(device)
         gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                           norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
-                          discriminator=def_disc, def_gen=def_gen, device=device).to(device)
+                          discriminator=def_disc, device=device).to(device)
         actor, critic, attempt = gen(state.unsqueeze(0), def_cur_loc)
         attempt_list.append(attempt)
         print("\nRuntime:", round((time.time() - start) / 60, 4), "min\n")

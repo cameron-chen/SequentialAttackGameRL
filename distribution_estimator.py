@@ -48,7 +48,9 @@ class Def_A2C_Action_Generator(nn.Module):
 
         self.gc2 = GraphConvolution(32, 16)
 
-        self.ln_value1 = nn.Linear(16 * self.num_target, 32)
+        self.ln1 = nn.Linear(16, 8)
+
+        self.ln_value1 = nn.Linear(8 * self.num_target, 32)
         self.ln_value2 = nn.Linear(32, 1)
 
         self.dropout = nn.Dropout(0.25)
@@ -65,7 +67,8 @@ class Def_A2C_Action_Generator(nn.Module):
         x = self.relu(self.bn(self.gc1(x, self.norma_adj_matrix)))
         x = self.dropout(x)
         x = self.relu(self.bn(self.gc2(x, self.norma_adj_matrix)))
-        x = x.view(-1, 16 * self.num_target)
+        x = self.relu(self.ln1(x))
+        x = x.view(-1, 8 * self.num_target)
 
         act_estimates = self.act_gen(x.squeeze())
         for i in range(1000-1):
@@ -118,6 +121,7 @@ class DistributionEstimator(object):
             if test and i_episode % 10 == 9:
                 print("\nEpisode", i_episode + 1)
                 print("Loss:", loss.item())
+                print("Actions:", len(act_dist.values()))
 
             loss.backward()
             dist_optim.step()
@@ -143,7 +147,7 @@ if __name__ == '__main__':
 
     dist_est_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                          adj_matrix, norm_adj_matrix, def_constraints, device)
-    distribution_estimator, loss_list = dist_est_obj.train(test=1, episodes=150)
+    distribution_estimator, loss_list = dist_est_obj.train(test=1, episodes=1000)
 
     plt.figure(figsize=(20, 10))
     plt.title("Distribution Estimator Loss (1000 action samples)")
