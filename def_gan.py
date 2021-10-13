@@ -43,7 +43,7 @@ def dist_est(act_estimates):
     for c in codes:
         act_probs.append(act_dist[c]/len(actions))
 
-    return actions, torch.tensor(act_probs, device=device), act_dist
+    return actions, torch.tensor(act_probs, device=device), act_dist, codes
 
 
 class Def_Action_Generator(nn.Module):
@@ -58,7 +58,7 @@ class Def_Action_Generator(nn.Module):
         self.device = device
 
     def forward(self, x):
-        noise = torch.rand(240).to(self.device)
+        noise = torch.rand(160).to(self.device)
         x = torch.cat((x, noise))
         x = self.relu(self.l1(x))
         x = self.relu(self.l2(x))
@@ -89,7 +89,7 @@ class Def_A2C_GAN(nn.Module):
 
         self.ln1 = nn.Linear(16, 8)
 
-        self.ln_value1 = nn.Linear(8 * self.num_target, 32)
+        self.ln_value1 = nn.Linear(16 * self.num_target, 32)
         self.ln_value2 = nn.Linear(32, 1)
 
         self.dropout = nn.Dropout(0.25)
@@ -106,8 +106,8 @@ class Def_A2C_GAN(nn.Module):
         x = self.relu(self.bn(self.gc1(x, self.norma_adj_matrix)))
         x = self.dropout(x)
         x = self.relu(self.bn(self.gc2(x, self.norma_adj_matrix)))
-        x = self.relu(self.ln1(x))
-        x = x.view(-1, 8 * self.num_target)
+        # x = self.relu(self.ln1(x))
+        x = x.view(-1, 16 * self.num_target)
 
         # Value
         state_value = self.relu(self.ln_value1(x))
@@ -117,62 +117,82 @@ class Def_A2C_GAN(nn.Module):
         action_generated = False
         attempt = 1
         invalid_list = []
-        loss_list = []
+        gen_loss_list = []
+        disc_loss_list = []
         lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), lr)
+        disc_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.001)
         while not action_generated:
             gen_optimizer.zero_grad()
             act_estimates = []
             for i in range(1000):
-                act_estimates.append(self.act_gen(x.squeeze().detach()))
+                act_estimates.append(self.act_gen(x.detach().squeeze()))
 
-            actions, act_probs, act_dist = dist_est(act_estimates)
+            actions, act_probs, act_dist, _ = dist_est(act_estimates)
 
             invalid_count = 0
             invalid_act = set()
             invalid_est = []
-            for i, act in enumerate(actions):
+            for i,act in enumerate(actions):
                 meet_constraints = False
                 val = check_move(def_cur_loc, act, self.threshold)
                 if val:
-                    meet_constraints = check_constraints(act, self.def_constraints, self.threshold)
+                    meet_constraints = check_constraints(act, self.def_constraints, 
+                                                         self.threshold)
                 if not meet_constraints:
                     invalid_count += 1
-                    invalid_act.update(act)
+                    invalid_act.add(act)
                     invalid_est.append(act_estimates[i])
-
-            if invalid_count > (len(actions) * 0.25):  # Threshold: 25% invalid actions
-                # disc_loss = 0
-                for i,act_est in enumerate(act_estimates):
+            
+            if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
+                disc_loss = 0
+                for i,act_est in enumerate(invalid_est):
                     inval_samp = torch.cat((def_cur_loc, act_est))
-                    # inval_out = self.discriminator(inval_samp)
-                    # disc_loss += self.disc_criterion(inval_out, torch.tensor(1, dtype=torch.float, device=device).view(1))
                     if i < 1:
                         inval_out = self.discriminator(inval_samp)
                     else:
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
-                disc_loss = self.disc_criterion(inval_out, true_labels)
+                gen_loss = self.disc_criterion(inval_out, true_labels)
                 print("\n#", attempt)
                 print("Invalid Samples:", invalid_count)
-                print("Loss:", disc_loss.item())
-                print("Action Count:", len(act_dist.values()))
-                disc_loss.backward() # retain_graph=True)
+                print("Generator Loss:", gen_loss.item())
+                print("Actions:", len(act_dist.values()))
+                gen_loss.backward() # retain_graph=True)
                 gen_optimizer.step()
 
                 attempt += 1
                 invalid_list.append(invalid_count)
-                loss_list.append(disc_loss.item())
+                gen_loss_list.append(gen_loss.item())
+
+                # Update discriminator
+                disc_err_rate = 1.0
+                while disc_err_rate > 0.2:
+                    disc_optimizer.zero_grad()
+                    for i,act_est in enumerate(invalid_est):
+                        samp = torch.cat((def_cur_loc, act_est.detach()))
+                        if i < 1:
+                            disc_pred = self.discriminator(samp)
+                        else:
+                            disc_pred = torch.cat((disc_pred, self.discriminator(samp)))
+                    print(disc_pred[:10])
+                    disc_error = disc_pred[torch.where(disc_pred > 0.5)]
+                    false_labels = torch.zeros(disc_pred.size()).to(self.device)
+                    disc_loss = self.disc_criterion(disc_pred, false_labels)
+                    disc_loss.backward()
+                    disc_optimizer.step()
+                    disc_err_rate = len(disc_error)/len(disc_pred)
+                    print("\nDiscriminator Error Rate:", disc_err_rate)
+                    print("Discriminator Loss:", disc_loss.item())
+                    disc_loss_list.append(disc_loss.item())
             else:
                 action_generated = True
 
-            '''
             lr = lr * 0.95
             for param_group in gen_optimizer.param_groups:
                 param_group['lr'] = lr
-            '''
 
-            if action_generated:
+            if attempt % 100 == 0 or action_generated:
                 plt.figure(figsize=(20, 10))
                 plt.title("# of Invalid Samples")
                 plt.xlabel("Attempt")
@@ -181,16 +201,24 @@ class Def_A2C_GAN(nn.Module):
                 plt.show()
 
                 plt.figure(figsize=(20, 10))
+                plt.title("Generator Loss")
+                plt.xlabel("Attempt")
+                plt.ylabel("Loss")
+                plt.plot(gen_loss_list, color='orange')
+                plt.show()
+
+                plt.figure(figsize=(20, 10))
                 plt.title("Discriminator Loss")
                 plt.xlabel("Attempt")
                 plt.ylabel("Loss")
-                plt.plot(loss_list, color='orange')
+                plt.plot(disc_loss_list, color='blue')
                 plt.show()
-
-            if attempt == 25 and invalid_count > len(act_estimates) * 0.8:
+            '''
+            elif attempt == 30 and invalid_count > len(act_estimates)*0.8:
                 return (0, 0), 0, attempt
-            elif attempt == 50:
+            elif attempt == 100:
                 return (0, 0), 0, attempt
+            '''
 
 
         for i, act in enumerate(actions):
@@ -224,6 +252,15 @@ if __name__ == '__main__':
 
     attempt_list = []
     train_start = time.time()
+
+    gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
+                          norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
+                          num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
+                          discriminator=def_disc, device=device).to(device)
+    actor, critic, attempt = gen(state.unsqueeze(0), def_cur_loc)
+    print("\nTotal Runtime:", round((time.time() - train_start) / 60, 4), "min\n")
+
+    '''
     for i in range(100):
         start = time.time()
         print("\nGAN", i + 1)
@@ -242,3 +279,4 @@ if __name__ == '__main__':
     plt.ylabel("Episodes")
     plt.plot(attempt_list)
     plt.show()
+    '''

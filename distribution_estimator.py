@@ -50,7 +50,7 @@ class Def_A2C_Action_Generator(nn.Module):
 
         self.ln1 = nn.Linear(16, 8)
 
-        self.ln_value1 = nn.Linear(8 * self.num_target, 32)
+        self.ln_value1 = nn.Linear(16 * self.num_target, 32)
         self.ln_value2 = nn.Linear(32, 1)
 
         self.dropout = nn.Dropout(0.25)
@@ -67,8 +67,8 @@ class Def_A2C_Action_Generator(nn.Module):
         x = self.relu(self.bn(self.gc1(x, self.norma_adj_matrix)))
         x = self.dropout(x)
         x = self.relu(self.bn(self.gc2(x, self.norma_adj_matrix)))
-        x = self.relu(self.ln1(x))
-        x = x.view(-1, 8 * self.num_target)
+        # x = self.relu(self.ln1(x))
+        x = x.view(-1, 16 * self.num_target)
 
         act_estimates = self.act_gen(x.squeeze())
         for i in range(1000-1):
@@ -110,18 +110,35 @@ class DistributionEstimator(object):
                 state[(res == 1).nonzero(), 0] += int(sum(res))
 
             act_estimates = self.def_act_gen(state.unsqueeze(0))
-            actions, act_probs, act_dist = dist_est(act_estimates)
+            actions, act_probs, act_dist, codes = dist_est(act_estimates)
 
             dist_optim.zero_grad()
-            dist_estimate = distribution_estimator(act_estimates.unsqueeze(0))
+            dist_estimates = distribution_estimator(act_estimates.unsqueeze(0))
 
-            loss = criterion(dist_estimate, act_probs)
+            loss = criterion(dist_estimates, act_probs)
             dist_est_loss_list.append(loss.item())
 
             if test and i_episode % 10 == 9:
                 print("\nEpisode", i_episode + 1)
                 print("Loss:", loss.item())
                 print("Actions:", len(act_dist.values()))
+
+            if test and i_episode % 100 == 99:
+                dist_dict = {k:[] for k,v in act_dist.items()}
+                for i,p in enumerate(dist_estimates):
+                    dist_dict[codes[i]].append(p.item())
+
+                real_act_probs = [count/len(actions) for (code, count) in act_dist.items()]
+                est_act_probs = [sum(p)/len(p) for (code, p) in dist_dict.items()]
+
+                plt.figure(figsize=(20,5))
+                plt.title("Distribution Estimate vs. Real Distribution")
+                plt.xlabel("Action")
+                plt.ylabel("Probability")
+                plt.plot(est_act_probs, label = "Estimated Action Probabilities")
+                plt.plot(real_act_probs, label = "Real Action Probabilities")
+                plt.legend()
+                plt.show()
 
             loss.backward()
             dist_optim.step()

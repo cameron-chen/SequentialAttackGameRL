@@ -101,9 +101,9 @@ class DefDiscriminator(object):
 
     def train(self, option='CNN', test=None):
         print("Generating Training Data...")
-        train_set, samples = self.gen_data(sample_size=7500)
+        train_set, samples = self.gen_data(sample_size=5000)
         print("\nGenerating Testing Data...")
-        test_set, samples = self.gen_data(sample_size=1500, samples=samples)
+        test_set, samples = self.gen_data(sample_size=1000, samples=samples)
 
         if option == 'CNN':
             disc = Def_Disc_CNN(self.num_targ, self.num_res).to(self.device)
@@ -153,7 +153,7 @@ class DefDiscriminator(object):
             print("%d correctly predicted out of %d samples" % (correct, len(test_set)))
 
             if correct <= top_correct:
-                if limit > 1:
+                if limit > 2:
                     print(top_correct)
                     print(limit)
                     limit -= 1
