@@ -48,7 +48,7 @@ def check_move(cur_loc, next_loc, threshold=1, test=None):
     for i, res in enumerate(next_loc):
         a = list(cur_loc[i]).index(1)
         b = list(res).index(1)
-        if abs(b - a) < threshold:
+        if abs(b - a) <= threshold:
             if test: print("Moving resource", i + 1, "from target", a, "to target", b, "is valid.")
         elif abs(b - a) == len(res) - threshold:
             if test: print("Moving resource", i + 1, "from target", a, "to target", b, "is valid.")
@@ -184,6 +184,33 @@ def convert_to_real(next_loc):
     return next_loc
 
 
+def convert_to_real_adj(next_loc, cur_loc, threshold=1):
+    # Converting binary next_loc to action values that meets adjacency constraint
+    num_res, num_tar = cur_loc.size()
+    pos = [res.nonzero() for res in cur_loc]
+
+    for i,res in enumerate(next_loc):
+        idx = (res == 1).nonzero()[0].item()
+        if pos[i] == 0:
+            val1 = [n for n in range(0, threshold+1)]
+            val2 = [n for n in range(num_tar-threshold, num_tar)]
+            val = val1 + val2
+        elif pos[i] == num_tar-1:
+            val1 = [n for n in range(0, threshold)]
+            val2 = [n for n in range(num_tar-1-threshold, num_tar)]
+            val = val1 + val2
+        else:
+            val = [n for n in range(pos[i]-threshold, pos[i]+threshold+1)]
+
+        res[val] = torch.rand(len(val)).to(device)
+        if res[idx] == 1:
+            res[idx] = torch.rand(1).to(device)
+        if res[idx] != max(res):
+            res[idx] = max(res) + (1-max(res))*torch.rand(1).to(device)
+
+    return next_loc
+
+
 def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample_number=500, samples=[]):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     t_samps = []
@@ -195,7 +222,7 @@ def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample
         cur_loc, next_loc = gen_valid_def_move(num_target, num_res, def_constraints, threshold)
         samp = cur_loc.tolist() + next_loc.tolist()
         if samp not in samples:
-            next_loc_real = convert_to_real(next_loc)
+            next_loc_real = convert_to_real_adj(next_loc, cur_loc, threshold)
             def_trans = torch.cat((cur_loc, next_loc_real))
             t_samps.append((def_trans, torch.tensor(1, dtype=torch.float, device=device)))
             samples.append(samp)
@@ -211,7 +238,7 @@ def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample
             else:
                 check = False
             if not val or not check:
-                next_loc_real = convert_to_real(next_loc)
+                next_loc_real = convert_to_real_adj(next_loc, cur_loc, threshold)
                 def_trans = torch.cat((cur_loc, next_loc_real))
                 f_samps.append((def_trans, torch.tensor(0, dtype=torch.float, device=device)))
                 samples.append(samp)

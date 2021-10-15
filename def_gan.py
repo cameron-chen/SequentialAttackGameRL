@@ -46,23 +46,49 @@ def dist_est(act_estimates):
     return actions, torch.tensor(act_probs, device=device), act_dist, codes
 
 
+def create_mask(def_cur_loc, threshold=1):
+    num_res, num_tar = def_cur_loc.size()
+    pos = [res.nonzero() for res in def_cur_loc]
+    mask = torch.ones(def_cur_loc.size(), dtype=torch.bool)
+
+    for i,res in enumerate(mask):
+        if pos[i] == 0:
+            val1 = [n for n in range(0, threshold+1)]
+            val2 = [n for n in range(num_tar-threshold, num_tar)]
+            val = val1 + val2
+        elif pos[i] == num_tar-1:
+            val1 = [n for n in range(0, threshold)]
+            val2 = [n for n in range(num_tar-1-threshold, num_tar)]
+            val = val1 + val2
+        else:
+            val = [n for n in range(pos[i]-threshold, pos[i]+threshold+1)]
+        res[val] = 0
+
+    return mask
+
+
 class Def_Action_Generator(nn.Module):
     def __init__(self, device):
         super(Def_Action_Generator, self).__init__()
-        self.l1 = nn.Linear(320, 150)
-        self.l2 = nn.Linear(150, 100)
+        self.l1 = nn.Linear(400, 200)
+        self.l2 = nn.Linear(200, 100)
         self.l3 = nn.Linear(100, 50)
         self.bn = nn.BatchNorm1d(10)
         self.relu = nn.ReLU()
         self.sig = nn.Sigmoid()
         self.device = device
 
-    def forward(self, x):
-        noise = torch.rand(160).to(self.device)
+    def forward(self, x, def_cur_loc):
+        noise = torch.rand(240).to(self.device)
         x = torch.cat((x, noise))
         x = self.relu(self.l1(x))
         x = self.relu(self.l2(x))
         x = self.sig(self.bn(self.l3(x).view(5, 10)))
+
+        # Meeting adajency constraints
+        mask = create_mask(def_cur_loc).to(self.device)
+        x = torch.masked_fill(x, mask, value=0)
+
         return x
 
 
@@ -126,7 +152,7 @@ class Def_A2C_GAN(nn.Module):
             gen_optimizer.zero_grad()
             act_estimates = []
             for i in range(1000):
-                act_estimates.append(self.act_gen(x.detach().squeeze()))
+                act_estimates.append(self.act_gen(x.detach().squeeze(), def_cur_loc))
 
             actions, act_probs, act_dist, _ = dist_est(act_estimates)
 
@@ -145,7 +171,6 @@ class Def_A2C_GAN(nn.Module):
                     invalid_est.append(act_estimates[i])
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
-                disc_loss = 0
                 for i,act_est in enumerate(invalid_est):
                     inval_samp = torch.cat((def_cur_loc, act_est))
                     if i < 1:
@@ -186,6 +211,9 @@ class Def_A2C_GAN(nn.Module):
                     print("Discriminator Loss:", disc_loss.item())
                     disc_loss_list.append(disc_loss.item())
             else:
+                print("\n#", attempt)
+                print("Invalid Samples:", invalid_count)
+                print("Actions:", len(act_dist.values()))
                 action_generated = True
 
             lr = lr * 0.95
