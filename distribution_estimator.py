@@ -59,7 +59,7 @@ class Def_A2C_Action_Generator(nn.Module):
         self.act_gen = Def_Action_Generator(device).to(device)
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state):
+    def forward(self, state, def_cur_loc):
         batch_size = len(state)
         noise = torch.rand((1, state.size(1), self.noise_feat)).to(self.device)
         x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1), noise), 2)
@@ -70,9 +70,9 @@ class Def_A2C_Action_Generator(nn.Module):
         # x = self.relu(self.ln1(x))
         x = x.view(-1, 16 * self.num_target)
 
-        act_estimates = self.act_gen(x.squeeze())
+        act_estimates = self.act_gen(x.squeeze(), def_cur_loc)
         for i in range(1000-1):
-            act_estimates = torch.cat((act_estimates, self.act_gen(x.squeeze())))
+            act_estimates = torch.cat((act_estimates, self.act_gen(x.squeeze(), def_cur_loc)))
 
         # Value
         state_value = self.relu(self.ln_value1(x))
@@ -109,7 +109,7 @@ class DistributionEstimator(object):
             for t, res in enumerate(def_cur_loc):
                 state[(res == 1).nonzero(), 0] += int(sum(res))
 
-            act_estimates = self.def_act_gen(state.unsqueeze(0))
+            act_estimates = self.def_act_gen(state.unsqueeze(0), def_cur_loc)
             actions, act_probs, act_dist, codes = dist_est(act_estimates)
 
             dist_optim.zero_grad()

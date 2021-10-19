@@ -70,18 +70,17 @@ def create_mask(def_cur_loc, threshold=1):
 class Def_Action_Generator(nn.Module):
     def __init__(self, device):
         super(Def_Action_Generator, self).__init__()
-        self.l1 = nn.Linear(400, 200)
-        self.l2 = nn.Linear(200, 100)
-        self.l3 = nn.Linear(100, 50)
+        self.l1 = nn.Linear(160, 120)
+        self.l2 = nn.Linear(120, 80)
+        self.l3 = nn.Linear(80, 50)
         self.bn = nn.BatchNorm1d(10)
         self.relu = nn.ReLU()
         self.sig = nn.Sigmoid()
         self.device = device
 
     def forward(self, x, def_cur_loc):
-        noise = torch.rand(240).to(self.device)
-        x = torch.cat((x, noise))
-        x = self.relu(self.l1(x))
+        noise = torch.randn(x.size()).to(self.device)
+        x = self.relu(self.l1(x + noise))
         x = self.relu(self.l2(x))
         x = self.sig(self.bn(self.l3(x).view(5, 10)))
 
@@ -94,7 +93,7 @@ class Def_Action_Generator(nn.Module):
 
 class Def_A2C_GAN(nn.Module):
     def __init__(self, payoff_matrix, adj_matrix, norm_adj_matrix, num_feature,
-                 num_resource, def_constraints, discriminator, device):
+                 num_resource, def_constraints, act_gen, discriminator, device):
         super(Def_A2C_GAN, self).__init__()
         self.payoff_matrix = payoff_matrix
         self.adj_matrix = adj_matrix
@@ -121,7 +120,7 @@ class Def_A2C_GAN(nn.Module):
         self.dropout = nn.Dropout(0.25)
         self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
-        self.act_gen = Def_Action_Generator(device)
+        self.act_gen = act_gen
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
     def forward(self, state, def_cur_loc):
@@ -145,9 +144,10 @@ class Def_A2C_GAN(nn.Module):
         invalid_list = []
         gen_loss_list = []
         disc_loss_list = []
-        lr = 0.001
-        gen_optimizer = optim.Adam(self.act_gen.parameters(), lr)
-        disc_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.001)
+        gen_lr = 0.001
+        disc_lr = 0.001
+        gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
+        disc_optimizer = optim.Adam(self.discriminator.parameters(), disc_lr)
         while not action_generated:
             gen_optimizer.zero_grad()
             act_estimates = []
@@ -192,6 +192,10 @@ class Def_A2C_GAN(nn.Module):
 
                 # Update discriminator
                 disc_err_rate = 1.0
+                disc_attempt = 1
+                disc_lr = 0.001
+                for param_group in disc_optimizer.param_groups:
+                    param_group['lr'] = disc_lr
                 while disc_err_rate > 0.2:
                     disc_optimizer.zero_grad()
                     for i,act_est in enumerate(invalid_est):
@@ -200,7 +204,6 @@ class Def_A2C_GAN(nn.Module):
                             disc_pred = self.discriminator(samp)
                         else:
                             disc_pred = torch.cat((disc_pred, self.discriminator(samp)))
-                    print(disc_pred[:10])
                     disc_error = disc_pred[torch.where(disc_pred > 0.5)]
                     false_labels = torch.zeros(disc_pred.size()).to(self.device)
                     disc_loss = self.disc_criterion(disc_pred, false_labels)
@@ -208,18 +211,35 @@ class Def_A2C_GAN(nn.Module):
                     disc_optimizer.step()
                     disc_err_rate = len(disc_error)/len(disc_pred)
                     print("\nDiscriminator Error Rate:", disc_err_rate)
+                    print("Discriminator Predictions:", [x.item() for x in disc_pred[:10]])
                     print("Discriminator Loss:", disc_loss.item())
                     disc_loss_list.append(disc_loss.item())
+
+                    disc_lr = disc_lr * 0.95
+                    for param_group in disc_optimizer.param_groups:
+                        param_group['lr'] = disc_lr
+
+                    if disc_attempt == 100:
+                        print("State:", state)
+                        print("Def Current Location:", def_cur_loc)
+                        print(invalid_est[:10])
+                        return (0, 0), 0, attempt, len(act_dist.values())
             else:
                 print("\n#", attempt)
                 print("Invalid Samples:", invalid_count)
                 print("Actions:", len(act_dist.values()))
                 action_generated = True
 
-            lr = lr * 0.95
+            gen_lr = gen_lr * 0.99
             for param_group in gen_optimizer.param_groups:
-                param_group['lr'] = lr
+                param_group['lr'] = gen_lr
 
+            if attempt == 50:
+                print("State:", state)
+                print("Def Current Location:", def_cur_loc)
+                print(invalid_est[:10])
+                return (0, 0), 0, attempt, len(act_dist.values())
+            '''
             if attempt % 100 == 0 or action_generated:
                 plt.figure(figsize=(20, 10))
                 plt.title("# of Invalid Samples")
@@ -242,12 +262,6 @@ class Def_A2C_GAN(nn.Module):
                 plt.plot(disc_loss_list, color='blue')
                 plt.show()
             '''
-            elif attempt == 30 and invalid_count > len(act_estimates)*0.8:
-                return (0, 0), 0, attempt
-            elif attempt == 100:
-                return (0, 0), 0, attempt
-            '''
-
 
         for i, act in enumerate(actions):
             if act not in invalid_act:
@@ -255,7 +269,7 @@ class Def_A2C_GAN(nn.Module):
                 select_prob = act_probs[i]
                 break
 
-        return (select_act, select_prob), state_value, attempt
+        return (select_act, select_prob), state_value, attempt, len(act_dist.values())
 
 
 if __name__ == '__main__':
@@ -279,12 +293,14 @@ if __name__ == '__main__':
         state[(res == 1).nonzero(), 0] += int(sum(res))
 
     attempt_list = []
+    action_num_list = []
     train_start = time.time()
-
+    '''
+    act_gen = Def_Action_Generator(device).to(device)
     gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                           norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
-                          discriminator=def_disc, device=device).to(device)
+                          act_gen=act_gen, discriminator=def_disc, device=device).to(device)
     actor, critic, attempt = gen(state.unsqueeze(0), def_cur_loc)
     print("\nTotal Runtime:", round((time.time() - train_start) / 60, 4), "min\n")
 
@@ -292,12 +308,14 @@ if __name__ == '__main__':
     for i in range(100):
         start = time.time()
         print("\nGAN", i + 1)
+        act_gen = Def_Action_Generator(device).to(device)
         gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                           norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
-                          discriminator=def_disc, device=device).to(device)
-        actor, critic, attempt = gen(state.unsqueeze(0), def_cur_loc)
+                          act_gen=act_gen, discriminator=def_disc, device=device).to(device)
+        actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc)
         attempt_list.append(attempt)
+        action_num_list.append(num_actions)
         print("\nRuntime:", round((time.time() - start) / 60, 4), "min\n")
 
     print("\nTotal Runtime:", round((time.time() - train_start) / 60, 4), "min\n")
@@ -307,4 +325,10 @@ if __name__ == '__main__':
     plt.ylabel("Episodes")
     plt.plot(attempt_list)
     plt.show()
-    '''
+
+    plt.figure(figsize=(20, 10))
+    plt.title("# of Unique Actions Generated (0.25 threshold for invalid actions, 1000 samples)")
+    plt.xlabel("GAN")
+    plt.ylabel("Number of Unique Actions")
+    plt.plot(action_num_list)
+    plt.show()

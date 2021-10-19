@@ -184,10 +184,13 @@ def convert_to_real(next_loc):
     return next_loc
 
 
-def convert_to_real_adj(next_loc, cur_loc, threshold=1):
+def convert_to_real_adj(next_loc, cur_loc, threshold=1, valid=1):
     # Converting binary next_loc to action values that meets adjacency constraint
     num_res, num_tar = cur_loc.size()
-    pos = [res.nonzero() for res in cur_loc]
+    if valid:
+        pos = [res.nonzero() for res in cur_loc]
+    else:
+        pos = [torch.argmax(res) for res in next_loc]
 
     for i,res in enumerate(next_loc):
         idx = (res == 1).nonzero()[0].item()
@@ -238,7 +241,7 @@ def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample
             else:
                 check = False
             if not val or not check:
-                next_loc_real = convert_to_real_adj(next_loc, cur_loc, threshold)
+                next_loc_real = convert_to_real_adj(next_loc, cur_loc, threshold, valid=0)
                 def_trans = torch.cat((cur_loc, next_loc_real))
                 f_samps.append((def_trans, torch.tensor(0, dtype=torch.float, device=device)))
                 samples.append(samp)
