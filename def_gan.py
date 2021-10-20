@@ -68,11 +68,13 @@ def create_mask(def_cur_loc, threshold=1):
 
 
 class Def_Action_Generator(nn.Module):
-    def __init__(self, device):
+    def __init__(self, num_tar, num_res, device):
         super(Def_Action_Generator, self).__init__()
-        self.l1 = nn.Linear(160, 120)
-        self.l2 = nn.Linear(120, 80)
-        self.l3 = nn.Linear(80, 50)
+        self.num_tar = num_tar
+        self.num_res = num_res
+        self.l1 = nn.Linear(16*num_tar, 14*num_tar)
+        self.l2 = nn.Linear(14*num_tar, 12*num_tar)
+        self.l3 = nn.Linear(12*num_tar, num_tar*num_res)
         self.bn = nn.BatchNorm1d(10)
         self.relu = nn.ReLU()
         self.sig = nn.Sigmoid()
@@ -82,7 +84,7 @@ class Def_Action_Generator(nn.Module):
         noise = torch.randn(x.size()).to(self.device)
         x = self.relu(self.l1(x + noise))
         x = self.relu(self.l2(x))
-        x = self.sig(self.bn(self.l3(x).view(5, 10)))
+        x = self.sig(self.bn(self.l3(x).view(self.num_res, self.num_tar)))
 
         # Meeting adajency constraints
         mask = create_mask(def_cur_loc).to(self.device)
@@ -239,8 +241,9 @@ class Def_A2C_GAN(nn.Module):
                 print("Def Current Location:", def_cur_loc)
                 print(invalid_est[:10])
                 return (0, 0), 0, attempt, len(act_dist.values())
+            
             '''
-            if attempt % 100 == 0 or action_generated:
+            if action_generated and attempt > 10:
                 plt.figure(figsize=(20, 10))
                 plt.title("# of Invalid Samples")
                 plt.xlabel("Attempt")
@@ -261,12 +264,12 @@ class Def_A2C_GAN(nn.Module):
                 plt.ylabel("Loss")
                 plt.plot(disc_loss_list, color='blue')
                 plt.show()
-            '''
+                '''
 
         for i, act in enumerate(actions):
             if act not in invalid_act:
                 select_act = act
-                select_prob = act_probs[i]
+                select_prob = act_probs[i]      # update this with distribution estimator output when implemented
                 break
 
         return (select_act, select_prob), state_value, attempt, len(act_dist.values())
@@ -295,20 +298,11 @@ if __name__ == '__main__':
     attempt_list = []
     action_num_list = []
     train_start = time.time()
-    '''
-    act_gen = Def_Action_Generator(device).to(device)
-    gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
-                          norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
-                          num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
-                          act_gen=act_gen, discriminator=def_disc, device=device).to(device)
-    actor, critic, attempt = gen(state.unsqueeze(0), def_cur_loc)
-    print("\nTotal Runtime:", round((time.time() - train_start) / 60, 4), "min\n")
 
-    '''
     for i in range(100):
         start = time.time()
         print("\nGAN", i + 1)
-        act_gen = Def_Action_Generator(device).to(device)
+        act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, device).to(device)
         gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                           norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,

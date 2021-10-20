@@ -56,7 +56,7 @@ class Def_A2C_Action_Generator(nn.Module):
         self.dropout = nn.Dropout(0.25)
         self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
-        self.act_gen = Def_Action_Generator(device).to(device)
+        self.act_gen = Def_Action_Generator(self.num_target, self.num_resource, device).to(device)
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
     def forward(self, state, def_cur_loc):
