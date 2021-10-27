@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from utils import GameGeneration
 from graph_convolution import GraphConvolution
-from def_gan import Def_Action_Generator, dist_est
+from def_act_gen import dist_est, Def_Action_Generator
 from sampling import gen_init_def_pos
 import configuration as config
 
@@ -26,15 +26,15 @@ class Distribution_Estimator(nn.Module):
 
     def forward(self, x):
         x = self.bn(self.conv1(x))
-        x = self.bn(self.conv2(x))
+        x = self.conv2(x)
         x = self.sig(self.ln(x.view(-1)))
         return x
 
 
-class Def_A2C_Action_Generator(nn.Module):
+class Def_A2C_Sample_Generator(nn.Module):
     def __init__(self, payoff_matrix, adj_matrix, norm_adj_matrix, num_feature,
                  num_resource, device):
-        super(Def_A2C_Action_Generator, self).__init__()
+        super(Def_A2C_Sample_Generator, self).__init__()
         self.payoff_matrix = payoff_matrix
         self.adj_matrix = adj_matrix
         self.norma_adj_matrix = norm_adj_matrix
@@ -47,8 +47,6 @@ class Def_A2C_Action_Generator(nn.Module):
         self.bn = nn.BatchNorm1d(self.num_target)
 
         self.gc2 = GraphConvolution(32, 16)
-
-        self.ln1 = nn.Linear(16, 8)
 
         self.ln_value1 = nn.Linear(16 * self.num_target, 32)
         self.ln_value2 = nn.Linear(32, 1)
@@ -91,25 +89,25 @@ class DistributionEstimator(object):
         self.def_constraints = def_constraints
         self.device = device
 
-        self.def_act_gen = Def_A2C_Action_Generator(payoff_matrix, adj_matrix, norm_adj_matrix, num_feature, num_res,
+        self.def_samp_gen = Def_A2C_Sample_Generator(payoff_matrix, adj_matrix, norm_adj_matrix, num_feature, num_res,
                                                     device).to(device)
 
-    def train(self, test=None, episodes=150):
+    def train(self, episodes=200, test=0):
         distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
         dist_optim = optim.Adam(distribution_estimator.parameters(), lr=0.001)
         criterion = nn.MSELoss()
 
-        print("Training Distribution Estimator for Defender Actions")
+        print("\nTraining Distribution Estimator for Defender Actions")
         start = time.time()
         dist_est_loss_list = []
         lr = 0.001
         for i_episode in range(episodes):
-            state = torch.zeros(self.num_targ, 2, dtype=torch.int32, device=device)
+            state = torch.zeros(self.num_targ, 2, dtype=torch.int32, device=self.device)
             def_cur_loc = gen_init_def_pos(self.num_targ, self.num_res, self.def_constraints, threshold=1)
             for t, res in enumerate(def_cur_loc):
                 state[(res == 1).nonzero(), 0] += int(sum(res))
 
-            act_estimates = self.def_act_gen(state.unsqueeze(0), def_cur_loc)
+            act_estimates = self.def_samp_gen(state.unsqueeze(0), def_cur_loc)
             actions, act_probs, act_dist, codes = dist_est(act_estimates)
 
             dist_optim.zero_grad()
@@ -118,10 +116,10 @@ class DistributionEstimator(object):
             loss = criterion(dist_estimates, act_probs)
             dist_est_loss_list.append(loss.item())
 
-            if test and i_episode % 10 == 9:
+            if i_episode % 10 == 9:
                 print("\nEpisode", i_episode + 1)
                 print("Loss:", loss.item())
-                print("Actions:", len(act_dist.values()))
+                # print("Actions:", len(act_dist.values()))
 
             if test and i_episode % 100 == 99:
                 dist_dict = {k:[] for k,v in act_dist.items()}
@@ -164,7 +162,7 @@ if __name__ == '__main__':
 
     dist_est_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                          adj_matrix, norm_adj_matrix, def_constraints, device)
-    distribution_estimator, loss_list = dist_est_obj.train(test=1, episodes=1000)
+    distribution_estimator, loss_list = dist_est_obj.train(episodes=200, test=1)
 
     plt.figure(figsize=(20, 10))
     plt.title("Distribution Estimator Loss (1000 action samples)")

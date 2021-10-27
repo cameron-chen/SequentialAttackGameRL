@@ -9,93 +9,16 @@ import matplotlib.pyplot as plt
 from utils import GameGeneration
 from graph_convolution import GraphConvolution
 from defender_discriminator import DefDiscriminator
+from def_act_gen import dist_est, Def_Action_Generator
+from distribution_estimator import DistributionEstimator
 from sampling import check_move, check_constraints, gen_init_def_pos
 import configuration as config
 
 
-def get_action(act):
-    action = torch.zeros((act.size()))
-    act_code = []
-    for i,res in enumerate(act):
-        idx = (res == max(res)).nonzero()[0].item()
-        action[i][idx] = 1
-        act_code.append(idx)
-    
-    return action, tuple(act_code)
-
-
-def dist_est(act_estimates):
-    act_dist = {}
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    actions = []
-    codes = []
-    for act in act_estimates:
-        action, act_code = get_action(act)
-        if act_code in act_dist.keys():
-            act_dist[act_code] += 1
-        else:
-            act_dist[act_code] = 1
-        actions.append(action)
-        codes.append(act_code)
-
-    act_probs = []
-    for c in codes:
-        act_probs.append(act_dist[c]/len(actions))
-
-    return actions, torch.tensor(act_probs, device=device), act_dist, codes
-
-
-def create_mask(def_cur_loc, threshold=1):
-    num_res, num_tar = def_cur_loc.size()
-    pos = [res.nonzero() for res in def_cur_loc]
-    mask = torch.ones(def_cur_loc.size(), dtype=torch.bool)
-
-    for i,res in enumerate(mask):
-        if pos[i] == 0:
-            val1 = [n for n in range(0, threshold+1)]
-            val2 = [n for n in range(num_tar-threshold, num_tar)]
-            val = val1 + val2
-        elif pos[i] == num_tar-1:
-            val1 = [n for n in range(0, threshold)]
-            val2 = [n for n in range(num_tar-1-threshold, num_tar)]
-            val = val1 + val2
-        else:
-            val = [n for n in range(pos[i]-threshold, pos[i]+threshold+1)]
-        res[val] = 0
-
-    return mask
-
-
-class Def_Action_Generator(nn.Module):
-    def __init__(self, num_tar, num_res, device):
-        super(Def_Action_Generator, self).__init__()
-        self.num_tar = num_tar
-        self.num_res = num_res
-        self.l1 = nn.Linear(16*num_tar, 14*num_tar)
-        self.l2 = nn.Linear(14*num_tar, 12*num_tar)
-        self.l3 = nn.Linear(12*num_tar, num_tar*num_res)
-        self.bn = nn.BatchNorm1d(10)
-        self.relu = nn.ReLU()
-        self.sig = nn.Sigmoid()
-        self.device = device
-
-    def forward(self, x, def_cur_loc):
-        noise = torch.randn(x.size()).to(self.device)
-        x = self.relu(self.l1(x + noise))
-        x = self.relu(self.l2(x))
-        x = self.sig(self.bn(self.l3(x).view(self.num_res, self.num_tar)))
-
-        # Meeting adajency constraints
-        mask = create_mask(def_cur_loc).to(self.device)
-        x = torch.masked_fill(x, mask, value=0)
-
-        return x
-
-
 class Def_A2C_GAN(nn.Module):
     def __init__(self, payoff_matrix, adj_matrix, norm_adj_matrix, num_feature,
-                 num_resource, def_constraints, act_gen, discriminator, device):
+                 num_resource, def_constraints, act_gen, discriminator, dist_estimator,
+                 device):
         super(Def_A2C_GAN, self).__init__()
         self.payoff_matrix = payoff_matrix
         self.adj_matrix = adj_matrix
@@ -105,6 +28,7 @@ class Def_A2C_GAN(nn.Module):
         self.def_constraints = def_constraints
         self.discriminator = discriminator
         self.disc_criterion = nn.BCELoss()
+        self.dist_estim_criterion = nn.MSELoss()
         self.device = device
         self.threshold = 1
         self.noise_feat = 2
@@ -123,6 +47,7 @@ class Def_A2C_GAN(nn.Module):
         self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
         self.act_gen = act_gen
+        self.dist_estimator = dist_estimator
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
     def forward(self, state, def_cur_loc):
@@ -146,15 +71,19 @@ class Def_A2C_GAN(nn.Module):
         invalid_list = []
         gen_loss_list = []
         disc_loss_list = []
+        dist_estim_loss_list = []
         gen_lr = 0.001
         disc_lr = 0.001
+        dist_estim_lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
         disc_optimizer = optim.Adam(self.discriminator.parameters(), disc_lr)
+        dist_estim_optimizer = optim.Adam(self.dist_estimator.parameters(), dist_estim_lr)
         while not action_generated:
             gen_optimizer.zero_grad()
-            act_estimates = []
-            for i in range(1000):
-                act_estimates.append(self.act_gen(x.detach().squeeze(), def_cur_loc))
+            act_estimates = self.act_gen(x.detach().squeeze(), def_cur_loc)
+            for i in range(1000-1):
+                act_estimates = torch.cat((act_estimates, self.act_gen(x.detach().squeeze(), def_cur_loc)))
+            act_estimates = act_estimates.view(1000, self.num_resource, self.num_target)
 
             actions, act_probs, act_dist, _ = dist_est(act_estimates)
 
@@ -229,7 +158,7 @@ class Def_A2C_GAN(nn.Module):
             else:
                 print("\n#", attempt)
                 print("Invalid Samples:", invalid_count)
-                print("Actions:", len(act_dist.values()))
+                print("Actions:", len(act_dist.values()), "\n")
                 action_generated = True
 
             gen_lr = gen_lr * 0.99
@@ -266,10 +195,31 @@ class Def_A2C_GAN(nn.Module):
                 plt.show()
                 '''
 
+        dist_estim_lr = 0.001
+        distribution_check = False
+        while not distribution_check:
+            dist_estim_optimizer.zero_grad()
+            dist_estimates = self.dist_estimator(act_estimates.detach().unsqueeze(0))
+
+            dist_estim_loss = self.dist_estim_criterion(dist_estimates, act_probs)
+            dist_estim_loss_list.append(dist_estim_loss.item())
+            print("Distribution Estimator Loss:", dist_estim_loss.item())
+
+            dist_estim_loss.backward()
+            dist_estim_optimizer.step()
+
+            if dist_estim_loss < 0.05:
+                distribution_check = True
+            
+            dist_estim_lr = dist_estim_lr * 0.95
+            for param_group in dist_estim_optimizer.param_groups:
+                param_group['lr'] = dist_estim_lr
+
+        # Select action with distribution estimate
         for i, act in enumerate(actions):
             if act not in invalid_act:
                 select_act = act
-                select_prob = act_probs[i]      # update this with distribution estimator output when implemented
+                select_prob = dist_estimates[i]
                 break
 
         return (select_act, select_prob), state_value, attempt, len(act_dist.values())
@@ -290,6 +240,10 @@ if __name__ == '__main__':
                                 def_constraints, device, threshold=1)
     def_disc = disc_obj.train(option)
 
+    dist_estim_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
+                                            adj_matrix, norm_adj_matrix, def_constraints, device)
+    dist_estimator = dist_estim_obj.train()
+
     state = torch.zeros(config.NUM_TARGET, 2, dtype=torch.int32, device=device)
     def_cur_loc = gen_init_def_pos(config.NUM_TARGET, config.NUM_RESOURCE, def_constraints, threshold=1)
     for t, res in enumerate(def_cur_loc):
@@ -306,10 +260,14 @@ if __name__ == '__main__':
         gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                           norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
-                          act_gen=act_gen, discriminator=def_disc, device=device).to(device)
+                          act_gen=act_gen, discriminator=def_disc, dist_estimator=dist_estimator, 
+                          device=device).to(device)
         actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc)
         attempt_list.append(attempt)
         action_num_list.append(num_actions)
+        print("Action:", actor[0])
+        print("Action Probability:", actor[1])
+        print("State Value:", critic)
         print("\nRuntime:", round((time.time() - start) / 60, 4), "min\n")
 
     print("\nTotal Runtime:", round((time.time() - train_start) / 60, 4), "min\n")

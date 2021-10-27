@@ -55,7 +55,6 @@ class GameGeneration(object):
         payoff_matrix[:, 3] = -payoff_matrix[:, 0].clone()
 
         # Generate defender resource constraints
-        '''
         groups = random.randint(2, self.num_res-1)
         def_constraints = [[] for _ in range(groups)]
         count = self.num_res
@@ -72,8 +71,8 @@ class GameGeneration(object):
                     res = random.randint(0, self.num_target - 1)
                 g.append(res)
                 count -= 1
-        '''
-        def_constraints = random.sample(range(0, self.num_target-1), int(self.num_res/2))
+
+        # def_constraints = random.sample(range(0, self.num_target-1), int(self.num_res/2))
 
         return payoff_matrix, adj_matrix, adj_hat, def_constraints
 
