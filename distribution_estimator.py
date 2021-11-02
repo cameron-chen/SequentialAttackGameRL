@@ -146,6 +146,9 @@ class DistributionEstimator(object):
             dist_optim.zero_grad()
             dist_estimates = distribution_estimator(act_estimates.unsqueeze(0))
 
+            #pi_variable, sigma_variable, mu_variable = dist_estimates
+            #loss = mdn_loss_fn(pi_variable, sigma_variable, mu_variable, act_probs)
+
             loss = criterion(dist_estimates, act_probs)
             dist_est_loss_list.append(loss.item())
 
