@@ -11,6 +11,9 @@ from def_act_gen import dist_est, Def_Action_Generator
 from sampling import gen_init_def_pos
 import configuration as config
 import numpy as np
+from argparse import ArgumentParser
+import mix_den as MD
+from mix_den import MixtureDensityNetwork
 
 
 class Distribution_Estimator(nn.Module):
@@ -126,6 +129,7 @@ class DistributionEstimator(object):
                                                     device).to(device)
 
     def train(self, episodes=200, test=0):
+        #distribution_estimator = MixtureDensityNetwork(1, 1, n_components=3)
         distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
         dist_optim = optim.Adam(distribution_estimator.parameters(), lr=0.001)
         criterion = nn.MSELoss()
@@ -149,6 +153,7 @@ class DistributionEstimator(object):
             #pi_variable, sigma_variable, mu_variable = dist_estimates
             #loss = mdn_loss_fn(pi_variable, sigma_variable, mu_variable, act_probs)
 
+            #loss = MD.loss(dist_estimates, act_probs).mean()
             loss = criterion(dist_estimates, act_probs)
             dist_est_loss_list.append(loss.item())
 
