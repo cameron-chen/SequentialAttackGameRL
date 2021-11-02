@@ -99,6 +99,12 @@ class DefDiscriminator(object):
                                               sample_size, samples)
         return data_set + add_set, samples
 
+    def initial(self, option='CNN'):
+        if option == 'CNN':
+            return Def_Disc_CNN(self.num_targ, self.num_res).to(self.device)
+        elif option == 'GCN':
+            return Def_Disc_GCN(self.num_targ, self.num_res, self.norm_adj_matrix).to(device)
+
     def train(self, option='CNN', test=None):
         print("Generating Training Data...")
         train_set, samples = self.gen_data(sample_size=5000)

@@ -128,13 +128,15 @@ class DistributionEstimator(object):
         self.def_samp_gen = Def_A2C_Sample_Generator(payoff_matrix, adj_matrix, norm_adj_matrix, num_feature, num_res,
                                                     device).to(device)
 
+    def initial(self):
+        return Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
+
     def train(self, episodes=200, test=0):
         #distribution_estimator = MixtureDensityNetwork(1, 1, n_components=3)
         distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
         dist_optim = optim.Adam(distribution_estimator.parameters(), lr=0.001)
         criterion = nn.MSELoss()
 
-        print("\nTraining Distribution Estimator for Defender Actions")
         start = time.time()
         dist_est_loss_list = []
         lr = 0.001
@@ -154,12 +156,13 @@ class DistributionEstimator(object):
             #loss = mdn_loss_fn(pi_variable, sigma_variable, mu_variable, act_probs)
 
             #loss = MD.loss(dist_estimates, act_probs).mean()
-            loss = criterion(dist_estimates, act_probs)
+            print("Estimates:", dist_estimates[:10])
+            print("Actual:", act_probs[:10])
+            loss = criterion(dist_estimates.view(-1), act_probs.view(-1))
             dist_est_loss_list.append(loss.item())
 
             if i_episode % 10 == 9:
-                print("\nEpisode", i_episode + 1)
-                print("Loss:", loss.item())
+                print("Episode", i_episode + 1, "-- Loss:", loss.item())
                 # print("Actions:", len(act_dist.values()))
 
             if test and i_episode % 100 == 99:
@@ -201,6 +204,7 @@ if __name__ == '__main__':
     payoff_matrix, adj_matrix, norm_adj_matrix, _ = game_gen.gen_game()
     def_constraints = [[0, 2], [1, 3], [4]]
 
+    print("\nTraining Distribution Estimator for Defender Actions")
     dist_est_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                          adj_matrix, norm_adj_matrix, def_constraints, device)
     distribution_estimator, loss_list = dist_est_obj.train(episodes=200, test=1)

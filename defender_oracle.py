@@ -8,13 +8,16 @@ import random
 import matplotlib.pyplot as plt
 
 from defender_model import Def_A2C_GCN, Def_A2C_GCN_LSTM, Def_A2C_GCN_Gen
+from def_gan import Def_A2C_GAN
 from utils import ReplayMemoryTransition, ReplayMemoryEpisode, GameGeneration, Transition
 from game_simulation import GameSimulation
 from optimization import Optimization
 import configuration as config
 from utils import Pure_Strategy
 from attacker_model import Att_A2C_GCN, Att_A2C_GCN_LSTM
-from defender_discriminator import DefDiscriminator, Def_Disc_CNN
+from defender_discriminator import DefDiscriminator
+from def_act_gen import Def_Action_Generator
+from distribution_estimator import DistributionEstimator
 from sampling import gen_init_def_pos, check_move, check_constraints
 
 
@@ -31,7 +34,7 @@ class DefenderOracle(object):
     def update_att_strategy(self, att_strategy):
         self.att_strategy = att_strategy
 
-    def train(self, option, def_constraints=None, discriminator=None, policy=None, test=None):
+    def train(self, option, discriminator=None, act_gen=None, dist_estimator=None, policy=None, test=None):
         if option == 'A2C-GCN':
             optimization = Optimization(batch_size=config.BATCH_SIZE_TRANSITION, num_step=config.NUM_STEP,
                                         gamma=config.GAMMA, device=self.device,
@@ -67,21 +70,21 @@ class DefenderOracle(object):
             target_net.eval()
             #print('Running Defender A2C-GCN-LSTM...')
             def_set = self.train_A2C_LSTM(policy_net, target_net, optimization=optimization,
-                                                    memory_size=config.MEMORY_SIZE_EPISODE, lstm_hidden_size=config.LSTM_HIDDEN_SIZE,
-                                                    lr=config.LR_EPISODE, entropy_coeff=config.ENTROPY_COEFF_EPS, test=test)
+                                            memory_size=config.MEMORY_SIZE_EPISODE, lstm_hidden_size=config.LSTM_HIDDEN_SIZE,
+                                            lr=config.LR_EPISODE, entropy_coeff=config.ENTROPY_COEFF_EPS, test=test)
 
             return def_set
         elif option == 'A2C-GCN-GAN':
-            policy_net = Def_A2C_GCN_Gen(payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix,
-                                          norm_adj_matrix=self.norm_adj_matrix, num_feature=config.NUM_FEATURE,
-                                          num_resource=config.NUM_RESOURCE, device=self.device).to(self.device)
+            policy_net = Def_A2C_GAN(payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix, 
+                                    norm_adj_matrix=self.norm_adj_matrix, num_feature=config.NUM_FEATURE,
+                                    num_resource=config.NUM_RESOURCE, def_constraints=self.def_constraints,
+                                    act_gen=act_gen, discriminator=discriminator, dist_estimator=dist_estimator, 
+                                    device=self.device).to(self.device)
             if policy is not None:
                 # Train a pre-trained model
                 policy_net.load_state_dict(policy.state_dict())
 
-            threshold = 1
-            def_set = self.train_A2C_GAN(policy_net, discriminator, threshold=threshold, def_constraints=def_constraints,
-                                         lr=config.LR_EPISODE, entropy_coeff=config.ENTROPY_COEFF_EPS, test=test)
+            def_set = self.train_A2C_GAN(policy_net, lr=config.LR_EPISODE, entropy_coeff=config.ENTROPY_COEFF_EPS, test=test)
 
             return def_set
         elif option == 'DQN-GCN':
@@ -470,12 +473,11 @@ class DefenderOracle(object):
 
         return def_avg_utils  # best_policy_net, best_def_util, att_util
 
-    def train_A2C_GAN(self, policy_net, discriminator, threshold, def_constraints, lr, entropy_coeff, test=None):
+    def train_A2C_GAN(self, policy_net, lr, entropy_coeff, test=None):
         # def_mixed strategy is a tensor, each element is a tuple <type, >
         num_target = self.payoff_matrix.size(0)
         num_res = config.NUM_RESOURCE
         optimizer = optim.RMSprop(policy_net.parameters(), lr)
-        disc_criterion = torch.nn.BCELoss()
 
         init_attacker_observation = torch.zeros(config.NUM_TARGET, 2, dtype=torch.int32, device=self.device)
         init_attacker_observation[:, 0] = -1
@@ -483,18 +485,15 @@ class DefenderOracle(object):
         def_utils = []
         atk_utils = []
         def_set = []        # store tuples of (policy, def_util, atk_util)
-        disc_loss = []      # loss from discriminator
         payoff_loss = []    # loss from actor-critic
-        count_list = []     # number of attempts for valid defender action
-        total_count = 0
 
         for i_episode in range(config.NUM_EPISODE):
             if test: print("\nEpisode", i_episode+1)
             # Initialize state and observation
             # Defender is assigned to locations according to defender constraints
             init_state = torch.zeros(num_target, 2, dtype=torch.int32, device=self.device)
-            def_init_loc = gen_init_def_pos(num_target, num_res, def_constraints, threshold=1)
-            for t, res in enumerate(def_init_loc):
+            def_init_loc = gen_init_def_pos(num_target, num_res, self.def_constraints, threshold=1)
+            for res in def_init_loc:
                 init_state[(res == 1).nonzero(), 0] += int(sum(res))
 
             state = init_state              # Defender resources are not differentiated in 'state'
@@ -515,110 +514,85 @@ class DefenderOracle(object):
             atk_total_util = 0.0
             time_step = 1
             while num_att > 0:
-                count = 0
-                meets_constraints = False
                 if num_att < self.num_att and state[:, 0].sum() == 0:
                     def_action = torch.zeros(num_target, num_target, dtype=torch.float32, device=self.device)
                 else:
-                    while not meets_constraints:
-                        optimizer.zero_grad()
-                        actor, critic = policy_net(state=state.unsqueeze(0))
+                    optimizer.zero_grad()
+                    print("Generating Defender action...", time_step)
+                    def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc)
+                    redo = 1
+                    while not torch.is_tensor(def_action):
+                        if test: print("Time step", time_step, ": redo", redo)
+                        def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc)
+                        redo += 1
 
-                        attempt = 1
-                        while attempt < 10:
-                            # Sample defender action from distribution
-                            def_action = GameSimulation.sample_def_action_from_res_dist(state=state, distributions=actor.squeeze(0),
-                                                                                        device=self.device)
+                # -------------------------------- Start sample attacker action --------------------------------
+                if att_pure_strategy.type == 'uniform':
+                    att_action = GameSimulation.sample_att_action_uniform(state=state, device=self.device)
+                elif att_pure_strategy.type == 'suqr':
+                    att_action = GameSimulation.sample_att_action_suqr(state=state, payoff=self.payoff_matrix, device=self.device)
+                elif att_pure_strategy.type == 'A2C-GCN':
+                    att_action = \
+                        GameSimulation.sample_att_action_A2C(observation=attacker_observation,
+                                                trained_strategy=att_pure_strategy.trained_strategy,
+                                                num_att=num_att,
+                                                device=self.device)
+                elif att_pure_strategy.type == 'A2C-GCN-LSTM':
+                    att_action, att_action_hidden_state, att_action_cell_state, \
+                    att_value_hidden_state, att_value_cell_state = GameSimulation.sample_att_action_A2C_LSTM(
+                        observation=attacker_observation, trained_strategy=att_pure_strategy.trained_strategy,
+                        action_hidden_state=att_action_hidden_state, action_cell_state=att_action_cell_state,
+                        value_hidden_state=att_value_hidden_state, value_cell_state=att_value_cell_state,
+                        num_att=num_att, device=self.device)
+                # -------------------------------- End sample attacker action --------------------------------
 
-                            # Check if action is valid according to adjacency matrix, and then constraints
-                            valid = check_move(def_cur_loc, def_action, threshold)
-                            if valid:
-                                meets_constraints = check_constraints(def_action, self.def_constraints, threshold)
+                next_state, def_immediate_utility, att_immediate_utility \
+                    = GameSimulation.gen_next_state_from_def_res(state=state, def_action=def_action, att_action=att_action,
+                                                                    payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix)
 
-                            if meets_constraints:
-                                break
-                            else:
-                                attempt += 1
-                        count += 1
+                next_att_observation = GameSimulation.gen_next_observation(observation=attacker_observation,
+                                                                            def_action=def_action, att_action=att_action)
 
-                        # If action is invalid, run through discriminator and update generator
-                        if valid and meets_constraints:
-                            break
-                        else:
-                            def_samp = torch.cat((def_cur_loc, actor.squeeze()))
-                            inval_out = discriminator(def_samp)
-                            loss = disc_criterion(inval_out, torch.tensor(0, dtype=torch.float, device=self.device).view(1))
-                            disc_loss.append(loss.item())
-                            loss.backward()
-                            optimizer.step()
+                if test:
+                    print("\nTarget Attacked:", att_action)
+                    print("Defender Action:", def_action)
+                    print("Def Util:", def_immediate_utility.item(), "-- Atk Util:", att_immediate_utility.item())
 
-                        if test:
-                            if count % 100 == 0:
-                                print("Discriminator Loss:", disc_loss[-1])
-                            if count % 1000 == 0:
-                                print(count, "invalid distributions for time step", time_step)
+                # Move to the next state
+                state = next_state
+                def_cur_loc = def_action
+                attacker_observation = next_att_observation
+                num_att -= sum(att_action).item()
 
-                    count_list.append(count)
-                    # print(count, attempt)
+                # Perform one step of the optimization -- FIGURE OUT LOSS THAT INCLUDES ESTIMATED PROBABILITY (prob)
+                critic_loss = F.mse_loss(critic.squeeze(), def_immediate_utility)
 
-                    # -------------------------------- Start sample attacker action --------------------------------
-                    if att_pure_strategy.type == 'uniform':
-                        att_action = GameSimulation.sample_att_action_uniform(state=state, device=self.device)
-                    elif att_pure_strategy.type == 'suqr':
-                        att_action = GameSimulation.sample_att_action_suqr(state=state, payoff=self.payoff_matrix, device=self.device)
-                    elif att_pure_strategy.type == 'A2C-GCN':
-                        att_action = \
-                            GameSimulation.sample_att_action_A2C(observation=attacker_observation,
-                                                    trained_strategy=att_pure_strategy.trained_strategy,
-                                                    num_att=num_att,
-                                                    device=self.device)
-                    elif att_pure_strategy.type == 'A2C-GCN-LSTM':
-                        att_action, att_action_hidden_state, att_action_cell_state, \
-                        att_value_hidden_state, att_value_cell_state = GameSimulation.sample_att_action_A2C_LSTM(
-                            observation=attacker_observation, trained_strategy=att_pure_strategy.trained_strategy,
-                            action_hidden_state=att_action_hidden_state, action_cell_state=att_action_cell_state,
-                            value_hidden_state=att_value_hidden_state, value_cell_state=att_value_cell_state,
-                            num_att=num_att, device=self.device)
-                    # -------------------------------- End sample attacker action --------------------------------
+                '''
+                advantage = def_immediate_utility - critic
 
-                    next_state, def_immediate_utility, att_immediate_utility \
-                        = GameSimulation.gen_next_state_from_def_res(state=state, def_action=def_action, att_action=att_action,
-                                                                     payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix)
+                log_distributions = torch.log(actor + 1e-10)
+                temp_distributions = log_distributions * def_action
+                temp_distributions = temp_distributions.sum(dim=2).sum(dim=1)
+                actor_loss = advantage.detach() * temp_distributions.unsqueeze(1)
+                actor_loss = -actor_loss.mean()
 
-                    next_att_observation = GameSimulation.gen_next_observation(observation=attacker_observation,
-                                                                               def_action=def_action, att_action=att_action)
+                entropy_term = prob # -(actor * torch.log(actor + 1e-10)).sum()
+                loss = critic_loss + actor_loss + entropy_coeff * entropy_term
+                '''
 
-                    # Move to the next state
-                    state = next_state
-                    def_cur_loc = def_action
-                    attacker_observation = next_att_observation
-                    num_att -= sum(att_action).item()
+                actor_loss = torch.log(prob)
+                loss = critic_loss # * actor_loss * entropy_coeff
+                if test:
+                    print("Time Step", time_step)
+                    print("Payoff loss:", loss.item())
+                payoff_loss.append(loss.item())
 
-                    # Perform one step of the optimization
-                    critic_loss = F.mse_loss(critic.squeeze(), def_immediate_utility)
+                loss.backward()
+                optimizer.step()
 
-                    advantage = def_immediate_utility - critic
-
-                    log_distributions = torch.log(actor + 1e-10)
-                    temp_distributions = log_distributions * def_action
-                    temp_distributions = temp_distributions.sum(dim=2).sum(dim=1)
-                    actor_loss = advantage.detach() * temp_distributions.unsqueeze(1)
-                    actor_loss = -actor_loss.mean()
-
-                    entropy_term = -(actor * torch.log(actor + 1e-10)).sum()
-                    loss = critic_loss + actor_loss + entropy_coeff * entropy_term
-                    if test:
-                        print("Time Step", time_step, ":", count, "tries")
-                        print("Payoff loss:", loss.item())
-                    payoff_loss.append(loss.item())
-
-                    loss.backward()
-                    optimizer.step()
-
-                    total_count += count
-                    time_step += 1
-                    def_total_util += def_immediate_utility
-                    atk_total_util += att_immediate_utility
+                time_step += 1
+                def_total_util += def_immediate_utility
+                atk_total_util += att_immediate_utility
 
             def_utils.append(def_total_util.item())
             atk_utils.append(atk_total_util.item())
@@ -627,7 +601,7 @@ class DefenderOracle(object):
                 print(i_episode, "episodes run")
                 def_set.append((policy_net, def_utils[-1], atk_utils[-1]))
 
-            if test:
+            if test:                    
                 print("Defender Utility:", def_utils[-1])
                 print("Attacker Utility:", atk_utils[-1])
 
@@ -670,25 +644,12 @@ class DefenderOracle(object):
                         if num_att < self.num_att and state[:, 0].sum() == 0:
                             def_action = torch.zeros(num_target, num_target, dtype=torch.float32, device=self.device)
                         else:
-                            while not meets_constraints:
-                                actor, critic = policy_net(state=state.unsqueeze(0))
-                                attempt = 1
-                                while attempt < 100:
-                                    # Sample defender action from distribution
-                                    def_action = GameSimulation.sample_def_action_from_res_dist(state=state, distributions=actor.squeeze(0),
-                                                                                                device=self.device)
-
-                                    # Check if action is valid according to adjacency matrix, and then constraints
-                                    valid = check_move(def_cur_loc, def_action, threshold)
-                                    if valid:
-                                        meets_constraints = check_constraints(def_action, self.def_constraints, threshold)
-                                    if meets_constraints:
-                                        break
-                                    else:
-                                        attempt += 1
-                                count += 1
-                                if valid and meets_constraints:
-                                    break
+                            def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc)
+                            redo = 1
+                            while not def_action:
+                                if test: print("Evaluation", i_sample, "-- Time step", time_step, ": redo", redo)
+                                def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc)
+                                redo += 1
 
                             # -------------------------------- Start sample attacker action --------------------------------
                             if att_pure_strategy.type == 'uniform':
@@ -731,7 +692,6 @@ class DefenderOracle(object):
                         def_cur_loc = def_action
                         num_att -= sum(att_action).item()
 
-
                 def_utility_average /= config.NUM_SAMPLE
                 att_utility_average /= config.NUM_SAMPLE
 
@@ -743,7 +703,7 @@ class DefenderOracle(object):
                 '''
 
         if test:
-            return def_set, def_utils, atk_utils, count_list
+            return def_set, def_utils, atk_utils
         else:
             return def_set
 
@@ -755,8 +715,6 @@ def test():
     payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
     def_constraints = [[1, 3], [0, 2], [4]]
     print(def_constraints)
-
-    # print(payoff_matrix, "\n", adj_matrix, "\n", norm_adj_matrix, def_constraints)
 
     trained_att_A2C_GCN_model = Att_A2C_GCN(payoff_matrix, norm_adj_matrix, config.NUM_FEATURE).to(device)
     #path1 = "attacker_2_A2C_GCN_state_dict.pth"
@@ -781,20 +739,23 @@ def test():
     print("\nTraining A2C-GCN-LSTM")
     new_def_lstm = def_oracle.train(option='A2C-GCN-LSTM', test=1)
     '''
-    path = "defender_discriminator.pth"
 
     print("\nTraining Defender Discriminator")
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
-    discriminator = disc_obj.train()
-    torch.save(discriminator.state_dict(), path)
-    '''
-    discriminator = Def_Disc_CNN(config.NUM_TARGET, config.NUM_RESOURCE)
-    discriminator.load_state_dict(torch.load(path, map_location=device))
-    '''
+    # discriminator = disc_obj.train()
+    discriminator = disc_obj.initial()
+
+    print("\nTraining Distribution Estimator")
+    dist_estim_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
+                                            adj_matrix, norm_adj_matrix, def_constraints, device)
+    # dist_estimator = dist_estim_obj.train()
+    dist_estimator = dist_estim_obj.initial()
+
     print("\nTraining A2C-GCN-GAN-Generator")
-    new_def_gan_gen, def_utils, atk_utils, count_list = def_oracle.train(option='A2C-GCN-GAN', discriminator=discriminator,
-                                                                         def_constraints=def_constraints, test=1)
+    act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, device).to(device)
+    new_def_gan_gen, def_utils, atk_utils = def_oracle.train(option='A2C-GCN-GAN', discriminator=discriminator, 
+                                                            act_gen=act_gen, dist_estimator=dist_estimator, test=1)
 
     print(round(((time.time() - start) / 60), 4), 'min')
 
@@ -807,6 +768,7 @@ def test():
     plt.legend()
     plt.show()
 
+    '''
     plt.figure(figsize=(20, 10))
     plt.title("Defender # of Tries for Valid Action")
     plt.xlabel("Episode")
@@ -814,7 +776,7 @@ def test():
     plt.plot(count_list, label="# of Tries")
     plt.legend()
     plt.show()
-    '''
+    
     # Save trained model
     path1 = "defender_2_A2C_GCN_state_dict.pth"
     path2 = "defender_2_A2C_GCN_LSTM_state_dict.pth"

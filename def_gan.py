@@ -50,7 +50,7 @@ class Def_A2C_GAN(nn.Module):
         self.dist_estimator = dist_estimator
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state, def_cur_loc):
+    def forward(self, state, def_cur_loc, test=0):
         batch_size = len(state)
         noise = torch.rand((1, state.size(1), self.noise_feat)).to(self.device)
         x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1), noise), 2)
@@ -58,7 +58,6 @@ class Def_A2C_GAN(nn.Module):
         x = self.relu(self.bn(self.gc1(x, self.norma_adj_matrix)))
         x = self.dropout(x)
         x = self.relu(self.bn(self.gc2(x, self.norma_adj_matrix)))
-        # x = self.relu(self.ln1(x))
         x = x.view(-1, 16 * self.num_target)
 
         # Value
@@ -102,6 +101,7 @@ class Def_A2C_GAN(nn.Module):
                     invalid_est.append(act_estimates[i])
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
+                # Update generator with discriminator
                 for i,act_est in enumerate(invalid_est):
                     inval_samp = torch.cat((def_cur_loc, act_est))
                     if i < 1:
@@ -110,10 +110,11 @@ class Def_A2C_GAN(nn.Module):
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
                 gen_loss = self.disc_criterion(inval_out, true_labels)
-                print("\n#", attempt)
-                print("Invalid Samples:", invalid_count)
-                print("Generator Loss:", gen_loss.item())
-                print("Actions:", len(act_dist.values()))
+                if test:
+                    print("\nAttempts:", attempt)
+                    print("Invalid Samples:", invalid_count)
+                    print("Generator Loss:", gen_loss.item())
+                    print("Actions:", len(act_dist.values()))
                 gen_loss.backward() # retain_graph=True)
                 gen_optimizer.step()
 
@@ -125,8 +126,6 @@ class Def_A2C_GAN(nn.Module):
                 disc_err_rate = 1.0
                 disc_attempt = 1
                 disc_lr = 0.001
-                for param_group in disc_optimizer.param_groups:
-                    param_group['lr'] = disc_lr
                 while disc_err_rate > 0.2:
                     disc_optimizer.zero_grad()
                     for i,act_est in enumerate(invalid_est):
@@ -141,9 +140,9 @@ class Def_A2C_GAN(nn.Module):
                     disc_loss.backward()
                     disc_optimizer.step()
                     disc_err_rate = len(disc_error)/len(disc_pred)
-                    print("\nDiscriminator Error Rate:", disc_err_rate)
-                    print("Discriminator Predictions:", [x.item() for x in disc_pred[:10]])
-                    print("Discriminator Loss:", disc_loss.item())
+                    if test:
+                        print("\nDiscriminator Error Rate:", disc_err_rate)
+                        print("Discriminator Loss:", disc_loss.item())
                     disc_loss_list.append(disc_loss.item())
 
                     disc_lr = disc_lr * 0.95
@@ -151,12 +150,12 @@ class Def_A2C_GAN(nn.Module):
                         param_group['lr'] = disc_lr
 
                     if disc_attempt == 100:
-                        print("State:", state)
-                        print("Def Current Location:", def_cur_loc)
-                        print(invalid_est[:10])
-                        return (0, 0), 0, attempt, len(act_dist.values())
+                        if test:
+                            return (0, 0), 0, attempt, len(act_dist.values())
+                        else:
+                            return 0, 0, 0
             else:
-                print("\n#", attempt)
+                print("\nAttempts:", attempt)
                 print("Invalid Samples:", invalid_count)
                 print("Actions:", len(act_dist.values()), "\n")
                 action_generated = True
@@ -166,35 +165,12 @@ class Def_A2C_GAN(nn.Module):
                 param_group['lr'] = gen_lr
 
             if attempt == 50:
-                print("State:", state)
-                print("Def Current Location:", def_cur_loc)
-                print(invalid_est[:10])
-                return (0, 0), 0, attempt, len(act_dist.values())
-            
-            '''
-            if action_generated and attempt > 10:
-                plt.figure(figsize=(20, 10))
-                plt.title("# of Invalid Samples")
-                plt.xlabel("Attempt")
-                plt.ylabel("Invalid Samples")
-                plt.plot(invalid_list)
-                plt.show()
+                if test:
+                    return (0, 0), 0, attempt, len(act_dist.values())
+                else:
+                    return 0, 0, 0
 
-                plt.figure(figsize=(20, 10))
-                plt.title("Generator Loss")
-                plt.xlabel("Attempt")
-                plt.ylabel("Loss")
-                plt.plot(gen_loss_list, color='orange')
-                plt.show()
-
-                plt.figure(figsize=(20, 10))
-                plt.title("Discriminator Loss")
-                plt.xlabel("Attempt")
-                plt.ylabel("Loss")
-                plt.plot(disc_loss_list, color='blue')
-                plt.show()
-                '''
-
+        # Update Distribution Estimator
         dist_estim_lr = 0.001
         distribution_check = False
         while not distribution_check:
@@ -203,7 +179,7 @@ class Def_A2C_GAN(nn.Module):
 
             dist_estim_loss = self.dist_estim_criterion(dist_estimates, act_probs)
             dist_estim_loss_list.append(dist_estim_loss.item())
-            print("Distribution Estimator Loss:", dist_estim_loss.item())
+            if test: print("Distribution Estimator Loss:", dist_estim_loss.item())
 
             dist_estim_loss.backward()
             dist_estim_optimizer.step()
@@ -220,9 +196,15 @@ class Def_A2C_GAN(nn.Module):
             if act not in invalid_act:
                 select_act = act
                 select_prob = dist_estimates[i]
+                if test:
+                    print("Estimated Probability:", select_prob.item())
+                    print("Actual Probability:", act_probs[i])
                 break
 
-        return (select_act, select_prob), state_value, attempt, len(act_dist.values())
+        if test:
+            return (select_act, select_prob), state_value, attempt, len(act_dist.values())
+        else:
+            return select_act, state_value, select_prob
 
 
 if __name__ == '__main__':
@@ -262,12 +244,17 @@ if __name__ == '__main__':
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
                           act_gen=act_gen, discriminator=def_disc, dist_estimator=dist_estimator, 
                           device=device).to(device)
-        actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc)
+        actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+        j = 1
+        while not torch.is_tensor(actor):
+            print("\nGAN", i+1, "redo", j)
+            actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+            j += 1
         attempt_list.append(attempt)
         action_num_list.append(num_actions)
-        print("Action:", actor[0])
-        print("Action Probability:", actor[1])
-        print("State Value:", critic)
+        print("Action:", actor[0].tolist())
+        print("Action Probability:", actor[1].item())
+        print("State Value:", critic.item())
         print("\nRuntime:", round((time.time() - start) / 60, 4), "min\n")
 
     print("\nTotal Runtime:", round((time.time() - train_start) / 60, 4), "min\n")

@@ -219,7 +219,6 @@ def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample
     t_samps = []
     f_samps = []
     start = time.time()
-    limit = sample_number/5
 
     while len(t_samps) < sample_number:
         cur_loc, next_loc = gen_valid_def_move(num_target, num_res, def_constraints, threshold)
@@ -229,7 +228,7 @@ def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample
             def_trans = torch.cat((cur_loc, next_loc_real))
             t_samps.append((def_trans, torch.tensor(1, dtype=torch.float, device=device)))
             samples.append(samp)
-            if len(t_samps) % limit == 0: print(len(t_samps), "valid samples generated")
+            if len(t_samps) % sample_number == 0: print(len(t_samps), "valid samples generated")
 
     while len(f_samps) < sample_number:
         cur_loc, next_loc = gen_def_move_rand(num_target, num_res, def_constraints, threshold)
@@ -245,7 +244,7 @@ def gen_samples_greedy(num_target, num_res, def_constraints, threshold=1, sample
                 def_trans = torch.cat((cur_loc, next_loc_real))
                 f_samps.append((def_trans, torch.tensor(0, dtype=torch.float, device=device)))
                 samples.append(samp)
-                if len(f_samps) % limit == 0: print(len(f_samps), "invalid samples generated")
+                if len(f_samps) % sample_number == 0: print(len(f_samps), "invalid samples generated")
 
     print(round((time.time() - start)/60, 4), "min")
 
