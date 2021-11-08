@@ -156,8 +156,6 @@ class DistributionEstimator(object):
             #loss = mdn_loss_fn(pi_variable, sigma_variable, mu_variable, act_probs)
 
             #loss = MD.loss(dist_estimates, act_probs).mean()
-            print("Estimates:", dist_estimates[:10])
-            print("Actual:", act_probs[:10])
             loss = criterion(dist_estimates.view(-1), act_probs.view(-1))
             dist_est_loss_list.append(loss.item())
 

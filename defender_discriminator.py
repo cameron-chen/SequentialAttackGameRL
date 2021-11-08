@@ -165,6 +165,8 @@ class DefDiscriminator(object):
                     limit -= 1
                 else:
                     overfit = True
+            elif correct/len(test_set) > 0.95:
+                overfit = True
             else:
                 top_correct = correct
                 limit = 3

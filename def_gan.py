@@ -102,7 +102,7 @@ class Def_A2C_GAN(nn.Module):
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
                 # Update generator with discriminator
-                for i,act_est in enumerate(invalid_est):
+                for i,act_est in enumerate(act_estimates):                # trying with all samples -- invalid_est only for invalid samples
                     inval_samp = torch.cat((def_cur_loc, act_est))
                     if i < 1:
                         inval_out = self.discriminator(inval_samp)
@@ -115,7 +115,7 @@ class Def_A2C_GAN(nn.Module):
                     print("Invalid Samples:", invalid_count)
                     print("Generator Loss:", gen_loss.item())
                     print("Actions:", len(act_dist.values()))
-                gen_loss.backward() # retain_graph=True)
+                gen_loss.backward()
                 gen_optimizer.step()
 
                 attempt += 1
@@ -149,30 +149,35 @@ class Def_A2C_GAN(nn.Module):
                     for param_group in disc_optimizer.param_groups:
                         param_group['lr'] = disc_lr
 
-                    if disc_attempt == 100:
+                    if disc_attempt > 50:
+                        prob = torch.tensor(1/len(act_dist.values()))
                         if test:
-                            return (0, 0), 0, attempt, len(act_dist.values())
+                            return 0, state_value, prob, attempt, len(act_dist.values())
                         else:
-                            return 0, 0, 0
+                            return 0, state_value, prob
             else:
                 print("\nAttempts:", attempt)
                 print("Invalid Samples:", invalid_count)
                 print("Actions:", len(act_dist.values()), "\n")
                 action_generated = True
 
-            gen_lr = gen_lr * 0.99
+            gen_lr = gen_lr * 0.95
             for param_group in gen_optimizer.param_groups:
                 param_group['lr'] = gen_lr
 
-            if attempt == 50:
+            if attempt > 25 and invalid_count >= invalid_list[-2]:
+                prob = torch.tensor(1/len(act_dist.values()))
                 if test:
-                    return (0, 0), 0, attempt, len(act_dist.values())
+                    return 0, state_value, prob, attempt, len(act_dist.values())
                 else:
-                    return 0, 0, 0
+                    return 0, state_value, prob
 
         # Update Distribution Estimator
+        dist_estim_attempt = 1
         dist_estim_lr = 0.001
         distribution_check = False
+        # act_estimates = torch.cat((act_estimates, act_estimates)).view(1000, self.num_resource, self.num_target)
+        # target_probs = act_probs + act_probs
         while not distribution_check:
             dist_estim_optimizer.zero_grad()
             dist_estimates = self.dist_estimator(act_estimates.detach().unsqueeze(0))
@@ -186,10 +191,14 @@ class Def_A2C_GAN(nn.Module):
 
             if dist_estim_loss < 0.05:
                 distribution_check = True
-            
+            elif dist_estim_attempt > 50:
+                distribution_check = True
+
             dist_estim_lr = dist_estim_lr * 0.95
             for param_group in dist_estim_optimizer.param_groups:
                 param_group['lr'] = dist_estim_lr
+
+            dist_estim_attempt += 1
 
         # Select action with distribution estimate
         for i, act in enumerate(actions):
@@ -198,11 +207,11 @@ class Def_A2C_GAN(nn.Module):
                 select_prob = dist_estimates[i]
                 if test:
                     print("Estimated Probability:", select_prob.item())
-                    print("Actual Probability:", act_probs[i])
+                    print("Actual Probability:", act_probs[i].item())
                 break
 
         if test:
-            return (select_act, select_prob), state_value, attempt, len(act_dist.values())
+            return select_act, state_value, select_prob, attempt, len(act_dist.values())
         else:
             return select_act, state_value, select_prob
 
@@ -244,11 +253,11 @@ if __name__ == '__main__':
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
                           act_gen=act_gen, discriminator=def_disc, dist_estimator=dist_estimator, 
                           device=device).to(device)
-        actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+        actor, prob, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
         j = 1
         while not torch.is_tensor(actor):
             print("\nGAN", i+1, "redo", j)
-            actor, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+            actor, prob, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
             j += 1
         attempt_list.append(attempt)
         action_num_list.append(num_actions)

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 from defender_model import Def_A2C_GCN, Def_A2C_GCN_LSTM, Def_A2C_GCN_Gen
 from def_gan import Def_A2C_GAN
+from def_act_gen import Def_Action_Generator
 from utils import ReplayMemoryTransition, ReplayMemoryEpisode, GameGeneration, Transition
 from game_simulation import GameSimulation
 from optimization import Optimization
@@ -18,7 +19,7 @@ from attacker_model import Att_A2C_GCN, Att_A2C_GCN_LSTM
 from defender_discriminator import DefDiscriminator
 from def_act_gen import Def_Action_Generator
 from distribution_estimator import DistributionEstimator
-from sampling import gen_init_def_pos, check_move, check_constraints
+from sampling import gen_init_def_pos, gen_next_loc
 
 
 class DefenderOracle(object):
@@ -84,7 +85,15 @@ class DefenderOracle(object):
                 # Train a pre-trained model
                 policy_net.load_state_dict(policy.state_dict())
 
-            def_set = self.train_A2C_GAN(policy_net, lr=config.LR_EPISODE, entropy_coeff=config.ENTROPY_COEFF_EPS, test=test)
+            update_layers = {policy_net.gc1.weight, policy_net.gc1.bias, policy_net.bn.weight, policy_net.bn.bias, 
+                            policy_net.gc2.weight, policy_net.gc2.bias, policy_net.ln1.weight, policy_net.ln1.bias, 
+                            policy_net.ln_value1.weight, policy_net.ln_value1.bias, policy_net.ln_value2.weight, 
+                            policy_net.ln_value2.bias, policy_net.act_gen.l1.weight, policy_net.act_gen.l1.bias, 
+                            policy_net.act_gen.l2.weight, policy_net.act_gen.l2.bias, policy_net.act_gen.l3.weight, 
+                            policy_net.act_gen.l3.bias, policy_net.act_gen.bn.weight, policy_net.act_gen.bn.bias}
+
+            def_set = self.train_A2C_GAN(policy_net, update_layers=update_layers, lr=config.LR_EPISODE, 
+                                        entropy_coeff=config.ENTROPY_COEFF_EPS, test=test)
 
             return def_set
         elif option == 'DQN-GCN':
@@ -473,19 +482,22 @@ class DefenderOracle(object):
 
         return def_avg_utils  # best_policy_net, best_def_util, att_util
 
-    def train_A2C_GAN(self, policy_net, lr, entropy_coeff, test=None):
+    def train_A2C_GAN(self, policy_net, update_layers, lr, entropy_coeff, test=None):
         # def_mixed strategy is a tensor, each element is a tuple <type, >
+        # torch.autograd.set_detect_anomaly(True)
         num_target = self.payoff_matrix.size(0)
         num_res = config.NUM_RESOURCE
-        optimizer = optim.RMSprop(policy_net.parameters(), lr)
+        optimizer = optim.Adam(update_layers, lr)
 
         init_attacker_observation = torch.zeros(config.NUM_TARGET, 2, dtype=torch.int32, device=self.device)
         init_attacker_observation[:, 0] = -1
 
         def_utils = []
         atk_utils = []
-        def_set = []        # store tuples of (policy, def_util, atk_util)
-        payoff_loss = []    # loss from actor-critic
+        def_set = []            # store tuples of (policy, def_util, atk_util)
+        payoff_loss = []        # loss from actor-critic
+        attempts_list = []     # number of attempts per episode to generate a valid defender action
+        num_acts_list = []     # number of unique actions generated per episode
 
         for i_episode in range(config.NUM_EPISODE):
             if test: print("\nEpisode", i_episode+1)
@@ -509,6 +521,8 @@ class DefenderOracle(object):
                 att_value_hidden_state = torch.zeros(1, config.LSTM_HIDDEN_SIZE, device=self.device)
                 att_value_cell_state = torch.zeros(1, config.LSTM_HIDDEN_SIZE, device=self.device)
 
+            # act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, self.device)
+
             # Run the game through an entire episode
             def_total_util = 0.0
             atk_total_util = 0.0
@@ -518,13 +532,28 @@ class DefenderOracle(object):
                     def_action = torch.zeros(num_target, num_target, dtype=torch.float32, device=self.device)
                 else:
                     optimizer.zero_grad()
-                    print("Generating Defender action...", time_step)
-                    def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc)
+                    print("\nGenerating Defender action...", time_step)
+                    total_attempts = 0
+                    if test:
+                        def_action, critic, prob, attempts, num_actions = policy_net(state.unsqueeze(0), def_cur_loc, test=test)
+                    else:
+                        def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc, test=test)
                     redo = 1
+                    total_attempts += attempts
                     while not torch.is_tensor(def_action):
-                        if test: print("Time step", time_step, ": redo", redo)
-                        def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc)
+                        if test: 
+                            print("Time step", time_step, ": redo", redo)
+                            def_action, critic, prob, attempts, num_actions = policy_net(state.unsqueeze(0), def_cur_loc, test=test)
+                        else:
+                            def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc, test=test)
                         redo += 1
+                        total_attempts += attempts
+                        if total_attempts >= 100:
+                            print("Attempts > 100: Using random valid defender action.")
+                            def_action = gen_next_loc(config.NUM_TARGET, config.NUM_RESOURCE, def_cur_loc, self.def_constraints)
+
+                    attempts_list.append(total_attempts)
+                    num_acts_list.append(num_actions)
 
                 # -------------------------------- Start sample attacker action --------------------------------
                 if att_pure_strategy.type == 'uniform':
@@ -554,7 +583,7 @@ class DefenderOracle(object):
                                                                             def_action=def_action, att_action=att_action)
 
                 if test:
-                    print("\nTarget Attacked:", att_action)
+                    print("Target Attacked:", att_action)
                     print("Defender Action:", def_action)
                     print("Def Util:", def_immediate_utility.item(), "-- Atk Util:", att_immediate_utility.item())
 
@@ -567,9 +596,9 @@ class DefenderOracle(object):
                 # Perform one step of the optimization -- FIGURE OUT LOSS THAT INCLUDES ESTIMATED PROBABILITY (prob)
                 critic_loss = F.mse_loss(critic.squeeze(), def_immediate_utility)
 
-                '''
                 advantage = def_immediate_utility - critic
-
+                actor_loss = advantage.detach()*prob.detach()
+                '''
                 log_distributions = torch.log(actor + 1e-10)
                 temp_distributions = log_distributions * def_action
                 temp_distributions = temp_distributions.sum(dim=2).sum(dim=1)
@@ -580,8 +609,8 @@ class DefenderOracle(object):
                 loss = critic_loss + actor_loss + entropy_coeff * entropy_term
                 '''
 
-                actor_loss = torch.log(prob)
-                loss = critic_loss # * actor_loss * entropy_coeff
+                # qval = prob*critic_loss
+                loss = critic_loss + actor_loss
                 if test:
                     print("Time Step", time_step)
                     print("Payoff loss:", loss.item())
@@ -703,7 +732,7 @@ class DefenderOracle(object):
                 '''
 
         if test:
-            return def_set, def_utils, atk_utils
+            return def_set, def_utils, atk_utils, attempts_list, num_acts_list
         else:
             return def_set
 
@@ -743,24 +772,24 @@ def test():
     print("\nTraining Defender Discriminator")
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
-    # discriminator = disc_obj.train()
-    discriminator = disc_obj.initial()
+    discriminator = disc_obj.train()
+    # discriminator = disc_obj.initial()
 
     print("\nTraining Distribution Estimator")
     dist_estim_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                             adj_matrix, norm_adj_matrix, def_constraints, device)
-    # dist_estimator = dist_estim_obj.train()
-    dist_estimator = dist_estim_obj.initial()
+    dist_estimator = dist_estim_obj.train()
+    # dist_estimator = dist_estim_obj.initial()
 
     print("\nTraining A2C-GCN-GAN-Generator")
     act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, device).to(device)
-    new_def_gan_gen, def_utils, atk_utils = def_oracle.train(option='A2C-GCN-GAN', discriminator=discriminator, 
-                                                            act_gen=act_gen, dist_estimator=dist_estimator, test=1)
+    new_def, def_utils, atk_utils, attempts_list, num_acts_list \
+        = def_oracle.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1)
 
     print(round(((time.time() - start) / 60), 4), 'min')
 
     plt.figure(figsize=(20, 10))
-    plt.title("Defender/Attacker Utilities")
+    plt.title("Defender/Attacker Utilities (25% threshold, input + 1 layer noise, 500 samps)")
     plt.xlabel("Episode")
     plt.ylabel("Utility")
     plt.plot(def_utils, label="Defender Utility")
@@ -768,15 +797,23 @@ def test():
     plt.legend()
     plt.show()
 
-    '''
     plt.figure(figsize=(20, 10))
-    plt.title("Defender # of Tries for Valid Action")
+    plt.title("Defender # of Tries for Valid Action (25% threshold, input + 1 layer noise, 500 samps)")
     plt.xlabel("Episode")
     plt.ylabel("# of Tries")
-    plt.plot(count_list, label="# of Tries")
+    plt.plot(attempts_list, label="# of Tries")
+    plt.legend()
+    plt.show()
+
+    plt.figure(figsize=(20, 10))
+    plt.title("Defender # of Unique Valid Actions (25% threshold, input + 1 layer noise, 500 samps)")
+    plt.xlabel("Episode")
+    plt.ylabel("# of Unique Actions")
+    plt.plot(num_acts_list, label="# of Unique Actions")
     plt.legend()
     plt.show()
     
+    '''
     # Save trained model
     path1 = "defender_2_A2C_GCN_state_dict.pth"
     path2 = "defender_2_A2C_GCN_LSTM_state_dict.pth"

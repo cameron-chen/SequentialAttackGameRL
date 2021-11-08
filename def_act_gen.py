@@ -59,6 +59,8 @@ def create_mask(def_cur_loc, threshold=1):
 
     return mask
 
+def noiser(input, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
+    return input + torch.randn(input.size()).to(device)
 
 class Def_Action_Generator(nn.Module):
     def __init__(self, num_tar, num_res, device):
@@ -74,8 +76,7 @@ class Def_Action_Generator(nn.Module):
         self.device = device
 
     def forward(self, x, def_cur_loc):
-        noise = torch.randn(x.size()).to(self.device)
-        x = self.relu(self.l1(x + noise))
+        x = self.relu(self.l1(noiser(x)))
         x = self.relu(self.l2(x))
         x = self.sig(self.bn(self.l3(x).view(self.num_res, self.num_tar)))
 
