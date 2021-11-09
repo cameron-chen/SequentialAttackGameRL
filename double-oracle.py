@@ -54,11 +54,6 @@ if 'GAN' in d_option:
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
     discriminator = disc_obj.train()
-    '''
-    path = "defender_discriminator.pth"
-    discriminator = Def_Disc_CNN(config.NUM_TARGET, config.NUM_RESOURCE)
-    discriminator.load_state_dict(torch.load(path, map_location=device))
-    '''
 else:
     discriminator = None
 
@@ -68,7 +63,7 @@ init_att_mix_strategy = [Pure_Strategy('uniform', [], 0.2, 'atkr', 0.0),
 def_oracle = DefenderOracle(att_strategy=init_att_mix_strategy, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                             norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
 print("\nGenerating Initial Defender Strategies...")
-init_def_pure_set = def_oracle.train(option=d_option, def_constraints=def_constraints, discriminator=discriminator)
+init_def_pure_set = def_oracle.train(option=d_option, discriminator=discriminator)
 
 init_def_mix_strategy = [Pure_Strategy('uniform', [], 0.2, 'defr', 0.0),
                         Pure_Strategy('suqr', [], 0.8, 'def_suqr', 0.0)]
@@ -96,8 +91,6 @@ limit = 50
 start = time.time()
 while not converge:
     print("\n\nIteration", iter)
-    # print(payoff_matrix)
-    # print(adj_matrix)
 
     # PART 1
     # Computing payoffs between new policies
@@ -107,7 +100,6 @@ while not converge:
                 payoff[(x, a)] = game_simulation.GameSimulation.play_game(def_pure_set[x], att_pure_set[a], payoff_matrix,
                                                                           adj_matrix, def_constraints, d_option, a_option)
     print("\nNew payoffs calculated.\n")
-    # print(payoff)
 
     # PART 2: CORE LP with gambit
     # def_mix, att_mix, u_d, u_a = nash.solveNash(def_pure_set, att_pure_set, payoff)
@@ -138,7 +130,7 @@ while not converge:
     for i_samp in range(3):
         def_oracle = DefenderOracle(att_strategy=att_mix_strat, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
-        new_def_pure_set = def_oracle.train(option=d_option, def_constraints=def_constraints, discriminator=discriminator)
+        new_def_pure_set = def_oracle.train(option=d_option, discriminator=discriminator)
         for n_def in new_def_pure_set:
             def_local_optim.append(n_def)
 
@@ -146,7 +138,7 @@ while not converge:
         print("Finding better defender policy...")
         def_oracle = DefenderOracle(att_strategy=att_mix_strat, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
-        new_def_pure_set = def_oracle.train(option=d_option, def_constraints=def_constraints, discriminator=discriminator)
+        new_def_pure_set = def_oracle.train(option=d_option, discriminator=discriminator)
         for n_def in new_def_pure_set:
             def_local_optim.append(n_def)
         if len(def_local_optim) >= 50:
@@ -158,11 +150,14 @@ while not converge:
     def_pure_set["def" + str(def_strategy_count)] = new_def
     def_strategy_count += 1
 
-    # for i_strat in range(len(def_local_optim)):
-    #     new_def, new_def_util, new_att_u_lb = def_local_optim.pop(def_local_optim.index(max(def_local_optim, key=lambda x: x[1])))
-    #     if new_def_util > u_d:
-    #         def_pure_set["def"+str(def_strategy_count)] = new_def
-    #         def_strategy_count += 1
+    '''
+    # For adding multiple strategies per oracle iteration
+    for i_strat in range(len(def_local_optim)):
+        new_def, new_def_util, new_att_u_lb = def_local_optim.pop(def_local_optim.index(max(def_local_optim, key=lambda x: x[1])))
+        if new_def_util > u_d:
+            def_pure_set["def"+str(def_strategy_count)] = new_def
+            def_strategy_count += 1
+    '''
 
     # Training Attacker Oracle
     print('\nTraining Attacker Oracle', iter, ':', a_option, "-- Att Set:", len(att_pure_set.keys()))
@@ -193,11 +188,14 @@ while not converge:
     att_pure_set["att" + str(att_strategy_count)] = new_att
     att_strategy_count += 1
 
-    # for j_strat in range(len(att_local_optim)):
-    #     new_att, new_att_util, new_def_u_lb = att_local_optim.pop(att_local_optim.index(max(att_local_optim, key=lambda x: x[1])))
-    #     if new_att_util > u_a:
-    #         att_pure_set["att"+str(att_strategy_count)] = new_att
-    #         att_strategy_count += 1
+    '''
+    # For adding multiple strategies per oracle iteration
+    for j_strat in range(len(att_local_optim)):
+        new_att, new_att_util, new_def_u_lb = att_local_optim.pop(att_local_optim.index(max(att_local_optim, key=lambda x: x[1])))
+        if new_att_util > u_a:
+            att_pure_set["att"+str(att_strategy_count)] = new_att
+            att_strategy_count += 1
+    '''
 
     # Upper Bounds
     def_u_ub.append(def_util_x)

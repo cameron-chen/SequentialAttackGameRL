@@ -789,7 +789,7 @@ def test():
     print(round(((time.time() - start) / 60), 4), 'min')
 
     plt.figure(figsize=(20, 10))
-    plt.title("Defender/Attacker Utilities (25% threshold, input + 1 layer noise, 500 samps)")
+    plt.title("Defender/Attacker Utilities (25% threshold, input noise, dropout 0.25)")
     plt.xlabel("Episode")
     plt.ylabel("Utility")
     plt.plot(def_utils, label="Defender Utility")
@@ -798,7 +798,7 @@ def test():
     plt.show()
 
     plt.figure(figsize=(20, 10))
-    plt.title("Defender # of Tries for Valid Action (25% threshold, input + 1 layer noise, 500 samps)")
+    plt.title("Defender # of Tries for Valid Action (25% threshold, input noise)")
     plt.xlabel("Episode")
     plt.ylabel("# of Tries")
     plt.plot(attempts_list, label="# of Tries")
@@ -806,7 +806,7 @@ def test():
     plt.show()
 
     plt.figure(figsize=(20, 10))
-    plt.title("Defender # of Unique Valid Actions (25% threshold, input + 1 layer noise, 500 samps)")
+    plt.title("Defender # of Unique Valid Actions (25% threshold, input noise)")
     plt.xlabel("Episode")
     plt.ylabel("# of Unique Actions")
     plt.plot(num_acts_list, label="# of Unique Actions")

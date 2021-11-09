@@ -73,10 +73,12 @@ class Def_Action_Generator(nn.Module):
         self.bn = nn.BatchNorm1d(10)
         self.relu = nn.ReLU()
         self.sig = nn.Sigmoid()
+        self.drop = nn.Dropout(0.25)
         self.device = device
 
     def forward(self, x, def_cur_loc):
         x = self.relu(self.l1(noiser(x)))
+        # x = self.drop(x)
         x = self.relu(self.l2(x))
         x = self.sig(self.bn(self.l3(x).view(self.num_res, self.num_tar)))
 
