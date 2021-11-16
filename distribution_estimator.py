@@ -16,6 +16,77 @@ import mix_den as MD
 from mix_den import MixtureDensityNetwork
 
 
+from torchvision import datasets, transforms
+
+import tqdm
+from matplotlib import pyplot as plt
+
+import normflow as nf
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+from pylab import rcParams
+rcParams['figure.figsize'] = 10, 8
+rcParams['figure.dpi'] = 300
+
+
+from torch import distributions
+from torch.nn.parameter import Parameter
+
+from sklearn import cluster, datasets, mixture
+from sklearn.preprocessing import StandardScaler
+
+nets = lambda: nn.Sequential(nn.Linear(10, 5000), nn.LeakyReLU(), nn.Linear(5000, 5000), nn.LeakyReLU(), nn.Linear(5000, 10), nn.Tanh())
+nett = lambda: nn.Sequential(nn.Linear(10, 5000), nn.LeakyReLU(), nn.Linear(5000, 5000), nn.LeakyReLU(), nn.Linear(5000, 10))
+masks = torch.from_numpy(np.random.rand(1000,5,10))
+prior = distributions.MultivariateNormal(torch.zeros(2), torch.eye(2))
+
+
+class RealNVP(nn.Module):
+    def __init__(self, nets, nett, mask, prior):
+        super(RealNVP, self).__init__()
+        
+        self.prior = prior
+        self.mask = nn.Parameter(mask, requires_grad=False)
+        self.t = torch.nn.ModuleList([nett() for _ in range(len(masks))])
+        self.s = torch.nn.ModuleList([nets() for _ in range(len(masks))])
+        
+    def g(self, z):
+        x = z
+        for i in range(len(self.t)):
+            x_ = x*self.mask[i]
+            s = self.s[i](x_)*(1 - self.mask[i])
+            t = self.t[i](x_)*(1 - self.mask[i])
+            x = x_ + (1 - self.mask[i]) * (x * torch.exp(s) + t)
+        return x
+
+    def f(self, x):
+        log_det_J, z = x.new_zeros(x.shape[0]), x
+        for i in reversed(range(len(self.t))):
+            print("MASK: ")
+            print(self.mask[i])
+            print("Z Value: ")
+            print(z)
+            z_ = self.mask[i] * z
+            s = self.s[i](z_) * (1-self.mask[i])
+            t = self.t[i](z_) * (1-self.mask[i])
+            z = (1 - self.mask[i]) * (z - t) * torch.exp(-s) + z_
+            log_det_J -= s.sum(dim=1)
+        return z, log_det_J
+    
+    def log_prob(self,x):
+        z, logp = self.f(x)
+        return self.prior.log_prob(z) + logp
+        
+    def sample(self, batchSize): 
+        z = self.prior.sample((batchSize, 1))
+        logp = self.prior.log_prob(z)
+        x = self.g(z)
+        return x
+
+
+
 class Distribution_Estimator(nn.Module):
     def __init__(self, num_targ, num_res):
         super(Distribution_Estimator, self).__init__()
@@ -133,14 +204,21 @@ class DistributionEstimator(object):
 
     def train(self, episodes=200, test=0):
         #distribution_estimator = MixtureDensityNetwork(1, 1, n_components=3)
-        distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
-        dist_optim = optim.Adam(distribution_estimator.parameters(), lr=0.001)
-        criterion = nn.MSELoss()
+
+        distribution_estimator = RealNVP(nets, nett, masks, prior)
+
+        optimizer = torch.optim.Adam([p for p in distribution_estimator.parameters() if p.requires_grad==True], lr=1e-4)
+
+        #distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
+
+        #dist_optim = optim.Adam(distribution_estimator.parameters(), lr=0.001)
+        #criterion = nn.MSELoss()
 
         start = time.time()
         dist_est_loss_list = []
         lr = 0.001
         for i_episode in range(episodes):
+
             state = torch.zeros(self.num_targ, 2, dtype=torch.int32, device=self.device)
             def_cur_loc = gen_init_def_pos(self.num_targ, self.num_res, self.def_constraints, threshold=1)
             for t, res in enumerate(def_cur_loc):
@@ -149,14 +227,25 @@ class DistributionEstimator(object):
             act_estimates = self.def_samp_gen(state.unsqueeze(0), def_cur_loc)
             actions, act_probs, act_dist, codes = dist_est(act_estimates)
 
-            dist_optim.zero_grad()
+            #noisy_moons = datasets.make_moons(n_samples=100, noise=.05)[0].astype(np.float32)
+
+            a_est = act_estimates.detach().numpy()
+
+            print("size of a_est")
+            print(act_estimates.size())
+
+            loss = -distribution_estimator.log_prob(torch.from_numpy(a_est)).mean()
+        
+            optimizer.zero_grad()
+
+            #dist_optim.zero_grad()
             dist_estimates = distribution_estimator(act_estimates.unsqueeze(0))
 
             #pi_variable, sigma_variable, mu_variable = dist_estimates
             #loss = mdn_loss_fn(pi_variable, sigma_variable, mu_variable, act_probs)
 
             #loss = MD.loss(dist_estimates, act_probs).mean()
-            loss = criterion(dist_estimates.view(-1), act_probs.view(-1))
+            #loss = criterion(dist_estimates.view(-1), act_probs.view(-1))
             dist_est_loss_list.append(loss.item())
 
             if i_episode % 10 == 9:
@@ -180,11 +269,14 @@ class DistributionEstimator(object):
                 plt.legend()
                 plt.show()
 
-            loss.backward()
-            dist_optim.step()
+            loss.backward(retain_graph=True)
+            optimizer.step()
+
+            if t % 500 == 0:
+                print('iter %s:' % t, 'loss = %.3f' % loss)
 
             lr = lr * 0.95
-            for param_group in dist_optim.param_groups:
+            for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
         print("\nTotal Runtime:", round((time.time() - start) / 60, 4), "min\n")
