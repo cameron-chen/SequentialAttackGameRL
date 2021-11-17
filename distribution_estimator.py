@@ -37,10 +37,13 @@ from torch.nn.parameter import Parameter
 from sklearn import cluster, datasets, mixture
 from sklearn.preprocessing import StandardScaler
 
-nets = lambda: nn.Sequential(nn.Linear(10, 5000), nn.LeakyReLU(), nn.Linear(5000, 5000), nn.LeakyReLU(), nn.Linear(5000, 10), nn.Tanh())
-nett = lambda: nn.Sequential(nn.Linear(10, 5000), nn.LeakyReLU(), nn.Linear(5000, 5000), nn.LeakyReLU(), nn.Linear(5000, 10))
-masks = torch.from_numpy(np.random.rand(1000,5,10))
-prior = distributions.MultivariateNormal(torch.zeros(2), torch.eye(2))
+from torch.autograd import Variable
+
+
+nets = lambda: nn.Sequential(nn.Linear(10, 5), nn.LeakyReLU(), nn.Linear(5, 5), nn.LeakyReLU(), nn.Linear(5, 10), nn.Tanh())
+nett = lambda: nn.Sequential(nn.Linear(10, 5), nn.LeakyReLU(), nn.Linear(5, 5), nn.LeakyReLU(), nn.Linear(5, 10))
+masks = torch.from_numpy(np.round(np.random.rand(5,5,10)).astype(np.float32))
+prior = distributions.MultivariateNormal(torch.zeros(1000,5,10), torch.eye(2))
 
 
 class RealNVP(nn.Module):
@@ -72,17 +75,22 @@ class RealNVP(nn.Module):
             s = self.s[i](z_) * (1-self.mask[i])
             t = self.t[i](z_) * (1-self.mask[i])
             z = (1 - self.mask[i]) * (z - t) * torch.exp(-s) + z_
-            log_det_J -= s.sum(dim=1)
+            #log_det_J -= s.sum(dim=1)
         return z, log_det_J
     
     def log_prob(self,x):
         z, logp = self.f(x)
-        return self.prior.log_prob(z) + logp
+        #logp = logp.view(logp.size(0), -1)
+        z = z.view(z.size(0), -1)
+        return logp #self.prior.log_prob(z) + logp
         
     def sample(self, batchSize): 
         z = self.prior.sample((batchSize, 1))
         logp = self.prior.log_prob(z)
         x = self.g(z)
+        return x
+
+    def forward(self, x):
         return x
 
 
@@ -188,6 +196,7 @@ class DistributionEstimator(object):
             print(act_estimates.size())
 
             loss = -distribution_estimator.log_prob(torch.from_numpy(a_est)).mean()
+            loss = Variable(loss, requires_grad = True)
         
             optimizer.zero_grad()
 
