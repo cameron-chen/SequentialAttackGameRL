@@ -109,7 +109,7 @@ class Def_A2C_GAN(nn.Module):
                     else:
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
-                gen_loss = self.disc_criterion(inval_out, true_labels)
+                gen_loss = self.disc_criterion(inval_out, true_labels) + 1/(len(act_dist.values()))
                 if test:
                     print("\nAttempts:", attempt)
                     print("Invalid Samples:", invalid_count)

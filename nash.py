@@ -4,6 +4,7 @@ import nashpy as nash
 import math
 import torch
 import time
+import random
 import gambit
 
 import configuration as config
@@ -49,21 +50,33 @@ def compute_nash(d_utils, a_utils, i):
     return def_mix, att_mix, u_d, u_a
 
 
-def gambit_nash(def_pure_set, att_pure_set, payoff):
+def gambit_nash(def_pure_set, att_pure_set, payoff, dom=0):
     # Uses gambit executables
-    def_strats = [strat for strat in def_pure_set.keys()]
-    atk_strats = [strat for strat in att_pure_set.keys()]
 
-    d_utils = []
-    for strat in def_strats:
-        d = [util[1][0] for util in payoff.items() if util[0][0] == strat]
-        d_utils.append(d)
+    if dom:
+        d_utils = []
+        for strat in def_pure_set.keys():
+            d = [util[1][0] for util in payoff.items() if util[0][0] == strat]
+            d_utils.append(d)
 
-    a_utils = []
-    for strat in atk_strats:
-        a = [util[1][1] for util in payoff.items() if util[0][1] == strat]
-        a_utils.append(a)
+        a_utils = []
+        for strat in att_pure_set.keys():
+            a = [util[1][1] for util in payoff.items() if util[0][1] == strat]
+            a_utils.append(a)
+        
+        # Find dominated strategies
+        def_dom, _ = strat_dom(def_pure_set, d_utils)
+        atk_dom, _ = strat_dom(att_pure_set, a_utils)
 
+        # Get strategies that are not dominated
+        def_strats = list(set(def_pure_set.keys()).difference(set(def_dom)))
+        def_strats.sort(key=strat_num)
+        atk_strats = list(set(att_pure_set.keys()).difference(set(atk_dom)))
+        atk_strats.sort(key=strat_num)
+    else:
+        def_strats = [strat for strat in def_pure_set.keys()]
+        atk_strats = [strat for strat in att_pure_set.keys()]
+    
     utils = []
     for d in def_strats:
         u = []
@@ -92,26 +105,17 @@ def gambit_nash(def_pure_set, att_pure_set, payoff):
     f.close()
 
     start = time.time()
-    os.system("gambit\gambit-gnm.exe -q < gambit\in.txt > gambit\out.txt")
+    os.system("gambit\gambit-enumpoly.exe -q < gambit\in.txt > gambit\out.txt")
 
     out = open("gambit\out.txt", "r")
     eqs = out.readlines()
 
     if len(eqs) < 1:
         # return [], [], 0.0, 0.0
-        print("GNM returned no solutions. Trying EnumPoly --")
-        os.system("gambit\gambit-enumpoly.exe -q < gambit\in.txt > gambit\out.txt")
+        print("Enumpoly returned no solutions. Trying GNM --")
+        os.system("gambit\gambit-gnm.exe -q < gambit\in.txt > gambit\out.txt")
         out = open("gambit\out.txt", "r")
-        enum_eqs = out.readlines()
-        eqs = []
-        for line in enum_eqs:
-            line = line.split(",")
-            for i,item in enumerate(line):
-                if "/" in item:
-                    string = item.split("/")
-                    num = float(string[0])/float(string[-1])
-                    line[i] = str(num)
-            eqs.append(",".join(line))
+        eqs = out.readlines()
         if len(eqs) < 1:
             print("Game is degenerate.")
             return [], [], 0.0, 0.0
@@ -121,12 +125,15 @@ def gambit_nash(def_pure_set, att_pure_set, payoff):
 
     d_n_list = []
     a_n_list = []
+    final_eqs = []
     for eq in eqs:
         eq = eq.split(",")
-        deq = eq[1:(len(utils) + 1)]
-        aeq = eq[(len(utils) + 1):]
-        deq = [float(x) for x in deq]
-        aeq = [float(y) for y in aeq]
+        for i,item in enumerate(eq[1:]):                            # converting fractions to decimals
+            frac = item.split("/")
+            if len(frac) > 1:
+                eq[i+1] = float(frac[0])/float(frac[-1])
+        deq = [float(x) for x in eq[1:(len(utils) + 1)]]
+        aeq = [float(y) for y in eq[(len(utils) + 1):]]
 
         def_eq_u = 0
         atk_eq_u = 0
@@ -137,21 +144,17 @@ def gambit_nash(def_pure_set, att_pure_set, payoff):
 
         d_n_list.append(def_eq_u)
         a_n_list.append(atk_eq_u)
+        final_eqs.append([deq, aeq])
 
-    best_eq = eqs[d_n_list.index(max(d_n_list))][:-1].split(",")
+    best_eq = final_eqs[d_n_list.index(max(d_n_list))]          # chosen equation = max defender utility
     u_d = max(d_n_list)
     u_a = a_n_list[d_n_list.index(max(d_n_list))]
 
-    d_eq = best_eq[1:(len(utils) + 1)]
-    a_eq = best_eq[(len(utils) + 1):]
-    d_eq = [float(x) for x in d_eq]
-    a_eq = [float(y) for y in a_eq]
+    print("\nNE Calculation Time:", round((time.time() - start) / 60, 4), "min, for %d x %d matrix" % (len(deq), len(aeq)))
+    print("\nDefender Nash Strategy:\t", best_eq[0], len(best_eq[0]), "\nUtility:", u_d)
+    print("Attacker Nash Strategy:\t", best_eq[1], len(best_eq[1]), "\nUtility:", u_a, "\n")
 
-    print("\nNE Calculation Time:", round((time.time() - start) / 60, 4), "min, for %d x %d matrix" % (len(d_eq), len(a_eq)))
-    print("\nDefender Nash Strategy:\t", d_eq, len(d_eq), "\nUtility:", u_d)
-    print("Attacker Nash Strategy:\t", a_eq, len(a_eq), "\nUtility:", u_a, "\n")
-
-    return d_eq, a_eq, u_d, u_a
+    return best_eq[0], best_eq[1], u_d, u_a, def_strats, atk_strats
 
 
 def strat_dom(play_set, utils):
@@ -179,7 +182,7 @@ def strat_dom(play_set, utils):
         new_utils = utils
         if dom_idx:
             if len(dom_idx) == len(utils):
-                print("No dominated strategies left. Returning", dominated_list, "\n")
+                print("No dominated strategies left. Dominated strategies are:", dominated_list, "\n")
                 return dominated_list, new_utils
             dominated_list.extend([strat[0] for k, strat in enumerate(play_set.items()) if k in dom_idx])
             for idx in dom_idx:

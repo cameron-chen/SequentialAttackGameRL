@@ -550,7 +550,7 @@ class DefenderOracle(object):
                         total_attempts += attempts
                         if total_attempts >= 100:
                             print("Attempts > 100: Using random valid defender action.")
-                            def_action = gen_next_loc(config.NUM_TARGET, config.NUM_RESOURCE, def_cur_loc, self.def_constraints)
+                            def_action = gen_next_loc(def_cur_loc, self.def_constraints)
 
                     attempts_list.append(total_attempts)
                     num_acts_list.append(num_actions)
@@ -583,15 +583,9 @@ class DefenderOracle(object):
                                                                             def_action=def_action, att_action=att_action)
 
                 if test:
-                    print("Target Attacked:", att_action)
+                    print("Target Attacked:", (att_action == 1).nonzero().item())
                     print("Defender Action:", def_action)
                     print("Def Util:", def_immediate_utility.item(), "-- Atk Util:", att_immediate_utility.item())
-
-                # Move to the next state
-                state = next_state
-                def_cur_loc = def_action
-                attacker_observation = next_att_observation
-                num_att -= sum(att_action).item()
 
                 # Perform one step of the optimization -- FIGURE OUT LOSS THAT INCLUDES ESTIMATED PROBABILITY (prob)
                 critic_loss = F.mse_loss(critic.squeeze(), def_immediate_utility)
@@ -619,6 +613,12 @@ class DefenderOracle(object):
                 loss.backward()
                 optimizer.step()
 
+                # Move to the next state
+                state = next_state
+                def_cur_loc = def_action
+                attacker_observation = next_att_observation
+                num_att -= sum(att_action).item()
+
                 time_step += 1
                 def_total_util += def_immediate_utility
                 atk_total_util += att_immediate_utility
@@ -631,7 +631,7 @@ class DefenderOracle(object):
                 def_set.append((policy_net, def_utils[-1], atk_utils[-1]))
 
             if test:                    
-                print("Defender Utility:", def_utils[-1])
+                print("\nDefender Utility:", def_utils[-1])
                 print("Attacker Utility:", atk_utils[-1])
 
             lr = lr * 0.95
@@ -778,8 +778,8 @@ def test():
     print("\nTraining Distribution Estimator")
     dist_estim_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                             adj_matrix, norm_adj_matrix, def_constraints, device)
-    dist_estimator = dist_estim_obj.train()
-    # dist_estimator = dist_estim_obj.initial()
+    # dist_estimator = dist_estim_obj.train()
+    dist_estimator = dist_estim_obj.initial()
 
     print("\nTraining A2C-GCN-GAN-Generator")
     act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, device).to(device)
@@ -799,7 +799,7 @@ def test():
 
     plt.figure(figsize=(20, 10))
     plt.title("Defender # of Tries for Valid Action (25% threshold, input noise)")
-    plt.xlabel("Episode")
+    plt.xlabel("Time Step")
     plt.ylabel("# of Tries")
     plt.plot(attempts_list, label="# of Tries")
     plt.legend()
@@ -807,12 +807,12 @@ def test():
 
     plt.figure(figsize=(20, 10))
     plt.title("Defender # of Unique Valid Actions (25% threshold, input noise)")
-    plt.xlabel("Episode")
+    plt.xlabel("Time Step")
     plt.ylabel("# of Unique Actions")
     plt.plot(num_acts_list, label="# of Unique Actions")
     plt.legend()
     plt.show()
-    
+
     '''
     # Save trained model
     path1 = "defender_2_A2C_GCN_state_dict.pth"

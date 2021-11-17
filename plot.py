@@ -10,7 +10,7 @@ def plot(dat, nash, player, model, option='individual'):
         plt.ylabel("Average Utility")
         filename = player[0] + "O_avg.png"
     elif option == 'individual':
-        plt.title(player + " Utilities -- select Nash equilibrium for max Defender utility")
+        plt.title(player + " Utilities -- select Nash equilibrium for max Defender utility [remove dominated strategies]")
         plt.ylabel("Utility")
         filename = player[0] + "O.png"
 
