@@ -598,13 +598,11 @@ class DefenderOracle(object):
                 temp_distributions = temp_distributions.sum(dim=2).sum(dim=1)
                 actor_loss = advantage.detach() * temp_distributions.unsqueeze(1)
                 actor_loss = -actor_loss.mean()
-
-                entropy_term = prob # -(actor * torch.log(actor + 1e-10)).sum()
-                loss = critic_loss + actor_loss + entropy_coeff * entropy_term
                 '''
+                pol_act = prob.detach()*def_action
+                entropy_term = -(pol_act * torch.log(pol_act + 1e-10)).sum()
+                loss = critic_loss + actor_loss + entropy_coeff * entropy_term
 
-                # qval = prob*critic_loss
-                loss = critic_loss + actor_loss
                 if test:
                     print("Time Step", time_step)
                     print("Payoff loss:", loss.item())
