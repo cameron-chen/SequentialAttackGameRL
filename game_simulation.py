@@ -5,7 +5,6 @@ import math
 import random
 
 import configuration
-from sampling import gen_init_def_pos
 
 def check_def_constraints(def_action, def_constraints, state):
     print(state)
@@ -332,101 +331,6 @@ class GameSimulation(object):
                 attacked = False
 
         return attack
-
-    @staticmethod
-    def play_game(def_strat, att_strat, payoff_matrix, adj_matrix, def_constraints, d_option, a_option):
-        def_utility_average = 0.0
-        att_utility_average = 0.0
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        num_target = payoff_matrix.size(0)
-        lstm_hidden_size = configuration.LSTM_HIDDEN_SIZE
-        n_sample = 50
-
-        for i_sample in range(n_sample):
-            init_state = torch.zeros(num_target, 2, dtype=torch.int32, device=device)
-            if 'GAN' in d_option:
-                def_init_loc = gen_init_def_pos(num_target, configuration.NUM_RESOURCE, def_constraints, threshold=1)
-                for t, res in enumerate(def_init_loc):
-                    init_state[(res == 1).nonzero(), 0] += int(sum(res))
-            else:
-                entries = torch.randint(0, num_target, [configuration.NUM_RESOURCE, ])
-                for t in range(0, len(entries)):
-                    init_state[entries[t], 0] += 1
-
-            state = init_state
-            init_attacker_observation = torch.zeros(num_target, 2, dtype=torch.int32, device=device)
-            init_attacker_observation[:, 0] = -1
-            attacker_observation = init_attacker_observation
-            num_att = configuration.NUM_ATTACK
-
-            if 'LSTM' in d_option:
-                d_action_hidden_state = torch.zeros(1, lstm_hidden_size, device=device)
-                d_action_cell_state = torch.zeros(1, lstm_hidden_size, device=device)
-                d_value_hidden_state = torch.zeros(1, lstm_hidden_size, device=device)
-                d_value_cell_state = torch.zeros(1, lstm_hidden_size, device=device)
-
-            if 'LSTM' in a_option:
-                a_action_hidden_state = torch.zeros(1, lstm_hidden_size, device=device)
-                a_action_cell_state = torch.zeros(1, lstm_hidden_size, device=device)
-                a_value_hidden_state = torch.zeros(1, lstm_hidden_size, device=device)
-                a_value_cell_state = torch.zeros(1, lstm_hidden_size, device=device)
-
-            # for t in range(config.NUM_STEP):
-            while num_att > 0:
-                with torch.no_grad():
-                    if 'LSTM' in d_option:
-                        def_actor, def_critic, d_action_hidden_state, d_action_cell_state, d_value_hidden_state, d_value_cell_state \
-                            = def_strat(state=state.unsqueeze(0), action_hidden_state=d_action_hidden_state,
-                                        action_cell_state=d_action_cell_state, value_hidden_state=d_value_hidden_state,
-                                        value_cell_state=d_value_cell_state)
-                    else:
-                        def_actor, def_critic = def_strat(state=state.unsqueeze(0))
-
-                    if 'LSTM' in a_option:
-                        att_actor, att_critic, a_action_hidden_state, a_action_cell_state, a_value_hidden_state, a_value_cell_state \
-                            = att_strat(state=attacker_observation.unsqueeze(0),
-                                        action_hidden_state=a_action_hidden_state,
-                                        action_cell_state=a_action_cell_state, value_hidden_state=a_value_hidden_state,
-                                        value_cell_state=a_value_cell_state)
-                    else:
-                        att_actor, att_critic = att_strat(state=attacker_observation.unsqueeze(0))
-
-                    if num_att < configuration.NUM_ATTACK and state[:, 0].sum() == 0:
-                        def_action = torch.zeros(num_target, num_target, dtype=torch.float32, device=device)
-                    elif 'GAN' in d_option:
-                        def_action = GameSimulation.sample_def_action_from_res_dist(state=state, distributions=def_actor.squeeze(0),
-                                                                                    device=device)
-                    else:
-                        def_action = GameSimulation.sample_def_action_from_distribution(state=state, distributions=def_actor.squeeze(0),
-                                                                                        def_constraints=def_constraints,
-                                                                                        device=device)
-                    att_action = GameSimulation.sample_att_action_from_distribution(distribution=att_actor.squeeze(0),
-                                                                                    num_att=num_att,
-                                                                                    device=device)
-
-                    if 'GAN' in d_option:
-                        next_state, def_immediate_utility, att_immediate_utility \
-                            = GameSimulation.gen_next_state_from_def_res(state, def_action, att_action, payoff_matrix,
-                                                                         adj_matrix)
-                    else:
-                        next_state, def_immediate_utility, att_immediate_utility \
-                            = GameSimulation.gen_next_state(state=state, def_action=def_action, att_action=att_action,
-                                                            payoff_matrix=payoff_matrix, adj_matrix=adj_matrix)
-                    next_att_observation = GameSimulation.gen_next_observation(observation=attacker_observation,
-                                                                               def_action=def_action,
-                                                                               att_action=att_action)
-
-                    def_utility_average += def_immediate_utility
-                    att_utility_average += att_immediate_utility
-
-                    state = next_state
-                    attacker_observation = next_att_observation
-                    num_att -= sum(att_action).item()
-
-        def_utility_average /= n_sample
-        att_utility_average /= n_sample
-
-        return def_utility_average.item(), att_utility_average.item()
 
     @staticmethod
     def sample_def_action_from_res_dist(state, distributions, device):

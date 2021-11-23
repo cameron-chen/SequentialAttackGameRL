@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from utils import GameGeneration
 from graph_convolution import GraphConvolution
-from def_act_gen import dist_est, Def_Action_Generator
+from def_act_gen import dist_est, Def_Action_Generator, Def_A2C_Sample_Generator
 from sampling import gen_init_def_pos
 import configuration as config
 import numpy as np
@@ -21,7 +21,7 @@ from torchvision import datasets, transforms
 import tqdm
 from matplotlib import pyplot as plt
 
-import normflow as nf
+# import normflow as nf
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -142,54 +142,6 @@ def mdn_loss_fn(pi, sigma, mu, y):
     return torch.mean(result)
 
 
-class Def_A2C_Sample_Generator(nn.Module):
-    def __init__(self, payoff_matrix, adj_matrix, norm_adj_matrix, num_feature,
-                 num_resource, device):
-        super(Def_A2C_Sample_Generator, self).__init__()
-        self.payoff_matrix = payoff_matrix
-        self.adj_matrix = adj_matrix
-        self.norma_adj_matrix = norm_adj_matrix
-        self.num_target = payoff_matrix.size(dim=0)
-        self.num_resource = num_resource
-        self.device = device
-        self.noise_feat = 2
-
-        self.gc1 = GraphConvolution(num_feature+self.noise_feat, 32)
-        self.bn = nn.BatchNorm1d(self.num_target)
-
-        self.gc2 = GraphConvolution(32, 16)
-
-        self.ln_value1 = nn.Linear(16 * self.num_target, 32)
-        self.ln_value2 = nn.Linear(32, 1)
-
-        self.dropout = nn.Dropout(0.25)
-        self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
-
-        self.act_gen = Def_Action_Generator(self.num_target, self.num_resource, device).to(device)
-
-    # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state, def_cur_loc):
-        batch_size = len(state)
-        noise = torch.rand((1, state.size(1), self.noise_feat)).to(self.device)
-        x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1), noise), 2)
-
-        x = self.relu(self.bn(self.gc1(x, self.norma_adj_matrix)))
-        x = self.dropout(x)
-        x = self.relu(self.bn(self.gc2(x, self.norma_adj_matrix)))
-        # x = self.relu(self.ln1(x))
-        x = x.view(-1, 16 * self.num_target)
-
-        act_estimates = self.act_gen(x.squeeze(), def_cur_loc)
-        for i in range(1000-1):
-            act_estimates = torch.cat((act_estimates, self.act_gen(x.squeeze(), def_cur_loc)))
-
-        # Value
-        state_value = self.relu(self.ln_value1(x))
-        state_value = self.ln_value2(state_value)
-
-        return act_estimates.view(1000, self.num_resource, self.num_target)
-
-
 class DistributionEstimator(object):
     def __init__(self, num_targ, num_res, num_feature, payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints, device):
         self.num_targ = num_targ
@@ -200,8 +152,9 @@ class DistributionEstimator(object):
         self.def_constraints = def_constraints
         self.device = device
 
+        self.act_gen = Def_Action_Generator(self.num_targ, self.num_res, device).to(device)
         self.def_samp_gen = Def_A2C_Sample_Generator(payoff_matrix, adj_matrix, norm_adj_matrix, num_feature, num_res,
-                                                    device).to(device)
+                                                    self.act_gen, device).to(device)
 
     def initial(self):
         return Distribution_Estimator(self.num_targ, self.num_res).to(self.device)

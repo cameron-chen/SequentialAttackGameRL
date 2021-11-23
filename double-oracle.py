@@ -6,7 +6,7 @@ import sys
 
 from utils import GameGeneration
 import configuration as config
-from utils import Pure_Strategy
+from utils import Pure_Strategy, play_game
 from nash import gambit_nash, strat_dom, strat_num
 from plot import plot
 import nash
@@ -87,7 +87,6 @@ for new_att in init_att_pure_set:
 # Double Oracle Algorithm
 iter = 1
 converge = False
-limit = 50
 start = time.time()
 while not converge:
     print("\n\nIteration", iter)
@@ -97,13 +96,13 @@ while not converge:
     for x in def_pure_set.keys():
         for a in att_pure_set.keys():
             if (x, a) not in payoff.keys():
-                payoff[(x, a)] = game_simulation.GameSimulation.play_game(def_pure_set[x], att_pure_set[a], payoff_matrix,
-                                                                          adj_matrix, def_constraints, d_option, a_option)
+                payoff[(x, a)] = play_game(def_pure_set[x], att_pure_set[a], payoff_matrix,
+                                            adj_matrix, def_constraints, d_option, a_option)
     print("\nNew payoffs calculated.\n")
 
     # PART 2: CORE LP with gambit
     # def_mix, att_mix, u_d, u_a = nash.solveNash(def_pure_set, att_pure_set, payoff)
-    def_mix, att_mix, u_d, u_a = gambit_nash(def_pure_set, att_pure_set, payoff)
+    def_mix, att_mix, u_d, u_a, def_strats, atk_strats = gambit_nash(def_pure_set, att_pure_set, payoff, dom=1)
     if len(def_mix) < 1:
         break
 
@@ -113,14 +112,13 @@ while not converge:
     def_mix_strat = []
     att_mix_strat = []
 
-    j = 0
-    for key, value in def_pure_set.items():
-        def_mix_strat.append(Pure_Strategy(d_option, value, def_mix[j], key, 0))
-        j = j + 1
-    j = 0
-    for key, value in att_pure_set.items():
+    dom_def_set = {key:val for key,val in def_pure_set.items() if key in def_strats}
+    for i, (key, value) in enumerate(dom_def_set.items()):
+        def_mix_strat.append(Pure_Strategy(d_option, value, def_mix[i], key, 0))
+
+    dom_atk_set = {key:val for key,val in att_pure_set.items() if key in atk_strats}
+    for j, (key, value) in enumerate(dom_atk_set.items()):
         att_mix_strat.append(Pure_Strategy(a_option, value, att_mix[j], key, 0))
-        j = j + 1
 
     # PART 3: Oracle Training
     # Training Defender Oracle
