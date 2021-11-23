@@ -67,10 +67,6 @@ class RealNVP(nn.Module):
     def f(self, x):
         log_det_J, z = x.new_zeros(x.shape[0]), x
         for i in reversed(range(len(self.t))):
-            print("MASK: ")
-            print(self.mask[i])
-            print("Z Value: ")
-            print(z)
             z_ = self.mask[i] * z
             s = self.s[i](z_) * (1-self.mask[i])
             t = self.t[i](z_) * (1-self.mask[i])
@@ -239,8 +235,8 @@ class DistributionEstimator(object):
 
             a_est = act_estimates.detach().numpy()
 
-            print("size of a_est")
-            print(act_estimates.size())
+            #print("size of a_est")
+            #print(act_estimates.size())
 
             loss = -distribution_estimator.log_prob(torch.from_numpy(a_est)).mean()
             loss = Variable(loss, requires_grad = True)
@@ -264,7 +260,7 @@ class DistributionEstimator(object):
             if test and i_episode % 100 == 99:
                 dist_dict = {k:[] for k,v in act_dist.items()}
                 for i,p in enumerate(dist_estimates):
-                    dist_dict[codes[i]].append(p.item())
+                    dist_dict[codes[i]].append(p.detach())
 
                 real_act_probs = [count/len(actions) for (code, count) in act_dist.items()]
                 est_act_probs = [sum(p)/len(p) for (code, p) in dist_dict.items()]
