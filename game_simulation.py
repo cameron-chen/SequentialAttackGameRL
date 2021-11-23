@@ -4,7 +4,9 @@ import torch
 import math
 import random
 
-import configuration
+import configuration as config
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def check_def_constraints(def_action, def_constraints, state):
     print(state)
@@ -180,11 +182,27 @@ class GameSimulation(object):
                 print("Invalid Defender Move.")
         # print('Def action final:', def_action)
         return def_action
+    
+    @staticmethod
+    def sample_def_action_full(distributions, all_moves):
+        def_action = torch.zeros(config.NUM_RESOURCE, config.NUM_TARGET).to(device)
+        pivot = torch.rand(1)
+        idx = 0
+        prob = distributions[idx]
+        while pivot > prob:
+            idx += 1
+            prob += distributions[idx]
+        def_code = all_moves[idx]
+
+        for i,pos in enumerate(def_code):
+            def_action[i][pos] = 1
+
+        return def_action
 
     @staticmethod
     def sample_def_action_A2C(num_attack_remain, state, trained_strategy, def_constraints, device):
         num_target = state.size(0)
-        if num_attack_remain < configuration.NUM_ATTACK and state[:, 0].sum() == 0:
+        if num_attack_remain < config.NUM_ATTACK and state[:, 0].sum() == 0:
             return torch.zeros(num_target, num_target, dtype=torch.float32, device=device)
         else:
             with torch.no_grad():
@@ -196,7 +214,7 @@ class GameSimulation(object):
                                    action_hidden_state, action_cell_state, value_hidden_state, value_cell_state,
                                    def_constraints, device):
         num_target = state.size(0)
-        if num_attack_remain < configuration.NUM_ATTACK and state[:, 0].sum() == 0:
+        if num_attack_remain < config.NUM_ATTACK and state[:, 0].sum() == 0:
             return torch.zeros(num_target, num_target, dtype=torch.float32, device=device), [], [], [], []
         else:
             with torch.no_grad():
@@ -232,7 +250,7 @@ class GameSimulation(object):
         #     return def_action
 
         def_location = torch.nonzero(state[:, 0])
-        temp_adj_matrix = torch.where(adj_matrix == configuration.MIN_VALUE, 0, 1)
+        temp_adj_matrix = torch.where(adj_matrix == config.MIN_VALUE, 0, 1)
         for target in def_location:
             num_defender = state[target.item(), 0].item()
             neighbors = torch.nonzero(temp_adj_matrix[target.item(), :]).squeeze(1)
@@ -274,10 +292,10 @@ class GameSimulation(object):
 
     @staticmethod
     def sample_def_action_suqr(state, payoff, adj, device):
-        num_target = configuration.NUM_TARGET
+        num_target = config.NUM_TARGET
         def_action = torch.zeros(num_target, num_target).to(device)
         def_location = torch.nonzero(state[:, 0])
-        temp_adj_matrix = torch.where(adj == configuration.MIN_VALUE, 0, 1)
+        temp_adj_matrix = torch.where(adj == config.MIN_VALUE, 0, 1)
 
         for target in def_location:
             num_defender = state[target.item(), 0].item()
@@ -304,7 +322,7 @@ class GameSimulation(object):
 
     @staticmethod
     def sample_att_action_suqr(state, payoff, device):
-        num_target = configuration.NUM_TARGET
+        num_target = config.NUM_TARGET
         attack = torch.zeros([num_target], dtype=torch.float32, device=device)
 
         attacked = True

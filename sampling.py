@@ -3,9 +3,9 @@ import random
 import time
 
 from game_simulation import GameSimulation
+import configuration as config
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 def gen_init_def_pos(num_targ, num_res, def_constraints, threshold=1):
     next_loc_available = [[x for x in range(num_targ)] for _ in range(num_res)]
@@ -225,11 +225,8 @@ def convert_to_real_adj(next_loc, cur_loc, threshold=1, valid=1):
         else:
             val = [n for n in range(pos[i]-threshold, pos[i]+threshold+1)]
 
-        res[val] = torch.rand(len(val)).to(device)
-        if res[idx] == 1:
-            res[idx] = torch.rand(1).to(device)
-        if res[idx] != max(res):
-            res[idx] = max(res) + (1-max(res))*torch.rand(1).to(device)
+        res[val] = (1/(2*threshold+1))*torch.rand(len(val)).to(device)
+        res[idx] = 1-sum(res[val])
 
     return next_loc
 
@@ -318,6 +315,37 @@ def calculate_combinations(def_cur_loc, possible_moves, def_constraints, thresho
     return combinations
 
 
+def gen_all_actions(num_targ, num_res):
+    all_moves = set()
+    while len(all_moves) < num_targ**num_res:
+        loc = torch.zeros((num_res, num_targ), dtype=torch.float)
+        for res in loc:
+            res[random.randint(0, num_targ - 1)] = 1
+        all_moves.add(tuple([(res == 1).nonzero().item() for res in loc]))
+
+    return sorted(list(all_moves))
+
+
+def gen_all_valid_actions(cur_loc, def_constraints, threshold=1):
+    val_moves = set()
+    possible_moves = gen_possible_moves(cur_loc, def_constraints, threshold)
+    combinations = calculate_combinations(cur_loc, possible_moves, def_constraints, threshold)
+    while len(val_moves) < combinations:
+        loc = gen_next_loc(cur_loc, def_constraints, threshold)
+        val_moves.add(tuple([(res == 1).nonzero().item() for res in loc]))
+
+    return sorted(list(val_moves))
+
+
+def gen_val_mask(all_moves, val_moves):
+    mask = torch.zeros(len(all_moves), dtype=torch.float, device=device)
+    for i,move in enumerate(all_moves):
+        if move in set(val_moves):
+            mask[i] = 1
+    
+    return mask
+
+
 def optimality_loss(state, def_cur_loc, def_constraints, payoff_matrix, adj_matrix, def_action, att_action, def_util, threshold=1):
     print("\nCalculating optimality loss...")
     possible_moves = gen_possible_moves(def_cur_loc, def_constraints, threshold)
@@ -336,3 +364,5 @@ def optimality_loss(state, def_cur_loc, def_constraints, payoff_matrix, adj_matr
     print("Actual move:", actual_move, "\tUtil:", def_util)
 
     return (all_moves[best_move]-def_util)**2    
+
+

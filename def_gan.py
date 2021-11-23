@@ -71,7 +71,7 @@ class Def_A2C_GAN(nn.Module):
         gen_loss_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
-        gen_lr = 0.001
+        gen_lr = 0.025
         disc_lr = 0.001
         dist_estim_lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
@@ -90,10 +90,7 @@ class Def_A2C_GAN(nn.Module):
             invalid_act = set()
             invalid_est = []
             for i,act in enumerate(actions):
-                meet_constraints = False
-                val = check_move(def_cur_loc, act, self.threshold)
-                if val:
-                    meet_constraints = check_constraints(act, self.def_constraints, 
+                meet_constraints = check_constraints(act, self.def_constraints, 
                                                          self.threshold)
                 if not meet_constraints:
                     invalid_count += 1
@@ -161,7 +158,7 @@ class Def_A2C_GAN(nn.Module):
                 print("Actions:", len(act_dist.values()), "\n")
                 action_generated = True
 
-            gen_lr = gen_lr * 0.95
+            gen_lr = gen_lr * 0.99
             for param_group in gen_optimizer.param_groups:
                 param_group['lr'] = gen_lr
 
@@ -191,7 +188,7 @@ class Def_A2C_GAN(nn.Module):
 
             if dist_estim_loss < 0.05:
                 distribution_check = True
-            elif dist_estim_attempt > 50:
+            elif dist_estim_attempt > 25:
                 distribution_check = True
 
             dist_estim_lr = dist_estim_lr * 0.95
@@ -224,16 +221,17 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     game_gen = GameGeneration(num_target=config.NUM_TARGET, graph_type='random_scale_free',
                               num_res=config.NUM_RESOURCE, device=device)
-    payoff_matrix, adj_matrix, norm_adj_matrix, _ = game_gen.gen_game()
-    def_constraints = [[0, 2], [1, 3], [4]]
+    payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
+    # def_constraints = [[0, 2], [1, 3], [4]]
 
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
-    def_disc = disc_obj.train(option)
+    def_disc = disc_obj.train(episodes=1600, option=option)
 
     dist_estim_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                             adj_matrix, norm_adj_matrix, def_constraints, device)
-    dist_estimator = dist_estim_obj.train()
+    # dist_estimator = dist_estim_obj.train()
+    dist_estimator = dist_estim_obj.initial()
 
     state = torch.zeros(config.NUM_TARGET, 2, dtype=torch.int32, device=device)
     def_cur_loc = gen_init_def_pos(config.NUM_TARGET, config.NUM_RESOURCE, def_constraints, threshold=1)
@@ -253,16 +251,15 @@ if __name__ == '__main__':
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
                           act_gen=act_gen, discriminator=def_disc, dist_estimator=dist_estimator, 
                           device=device).to(device)
-        actor, prob, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+        actor, critic, prob, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
         j = 1
         while not torch.is_tensor(actor):
             print("\nGAN", i+1, "redo", j)
-            actor, prob, critic, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+            actor, critic, prob, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
             j += 1
         attempt_list.append(attempt)
         action_num_list.append(num_actions)
-        print("Action:", actor[0].tolist())
-        print("Action Probability:", actor[1].item())
+        print("Action:", actor.tolist())
         print("State Value:", critic.item())
         print("\nRuntime:", round((time.time() - start) / 60, 4), "min\n")
 

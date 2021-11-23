@@ -105,11 +105,11 @@ class DefDiscriminator(object):
         elif option == 'GCN':
             return Def_Disc_GCN(self.num_targ, self.num_res, self.norm_adj_matrix).to(device)
 
-    def train(self, option='CNN', test=None):
+    def train(self, episodes, option='CNN', test=None):
         print("Generating Training Data...")
-        train_set, samples = self.gen_data(sample_size=5000)
+        train_set, samples = self.gen_data(sample_size=episodes)
         print("\nGenerating Testing Data...")
-        test_set, samples = self.gen_data(sample_size=1000, samples=samples)
+        test_set, samples = self.gen_data(sample_size=episodes/5, samples=samples)
 
         if option == 'CNN':
             disc = Def_Disc_CNN(self.num_targ, self.num_res).to(self.device)
@@ -199,11 +199,11 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     game_gen = GameGeneration(num_target=config.NUM_TARGET, graph_type='random_scale_free',
                               num_res=config.NUM_RESOURCE, device=device)
-    payoff_matrix, adj_matrix, norm_adj_matrix, _ = game_gen.gen_game()
-    def_constraints = [[0, 2], [1, 3], [4]]
+    payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
+    # def_constraints = [[0, 2], [1, 3], [4]]
 
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
-    def_disc = disc_obj.train(option)
+    def_disc = disc_obj.train(episodes=1600, option=option)
 
 

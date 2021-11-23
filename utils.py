@@ -8,8 +8,11 @@ import math
 from collections import namedtuple, deque
 
 from game_simulation import GameSimulation
+from sampling import gen_init_def_pos
+import configuration as config
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+TransitionV = namedtuple('TransitionV', ('state', 'action', 'next_state', 'reward', 'mask'))
 Pure_Strategy = namedtuple('Pure_Strategy', ('type', 'trained_strategy', 'probability', 'name', 'value'))
 # seed = 42
 
@@ -68,9 +71,9 @@ class GameGeneration(object):
             else:
                 add_res = random.randint(1, group_max)
             for i in range(add_res):
-                res = random.randint(0, self.num_target - 1)
+                res = random.randint(0, self.num_res - 1)
                 while res in (item for group in def_constraints for item in group):
-                    res = random.randint(0, self.num_target - 1)
+                    res = random.randint(0, self.num_res - 1)
                 g.append(res)
                 count -= 1
 
@@ -131,23 +134,42 @@ class ReplayMemoryTransition(object):
     def __len__(self):
         return len(self.memory)
 
+class ReplayMemoryTransitionV(object):
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = TransitionV(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 def play_game(def_strat, att_strat, payoff_matrix, adj_matrix, def_constraints, d_option, a_option):
         def_utility_average = 0.0
         att_utility_average = 0.0
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         num_target = payoff_matrix.size(0)
-        lstm_hidden_size = configuration.LSTM_HIDDEN_SIZE
+        lstm_hidden_size = config.LSTM_HIDDEN_SIZE
         n_sample = 50
 
         for i_sample in range(n_sample):
             init_state = torch.zeros(num_target, 2, dtype=torch.int32, device=device)
             if 'GAN' in d_option:
-                def_init_loc = gen_init_def_pos(num_target, configuration.NUM_RESOURCE, def_constraints, threshold=1)
+                def_init_loc = gen_init_def_pos(num_target, config.NUM_RESOURCE, def_constraints, threshold=1)
                 for t, res in enumerate(def_init_loc):
                     init_state[(res == 1).nonzero(), 0] += int(sum(res))
             else:
-                entries = torch.randint(0, num_target, [configuration.NUM_RESOURCE, ])
+                entries = torch.randint(0, num_target, [config.NUM_RESOURCE, ])
                 for t in range(0, len(entries)):
                     init_state[entries[t], 0] += 1
 
@@ -155,7 +177,7 @@ def play_game(def_strat, att_strat, payoff_matrix, adj_matrix, def_constraints, 
             init_attacker_observation = torch.zeros(num_target, 2, dtype=torch.int32, device=device)
             init_attacker_observation[:, 0] = -1
             attacker_observation = init_attacker_observation
-            num_att = configuration.NUM_ATTACK
+            num_att = config.NUM_ATTACK
 
             if 'LSTM' in d_option:
                 d_action_hidden_state = torch.zeros(1, lstm_hidden_size, device=device)
@@ -189,7 +211,7 @@ def play_game(def_strat, att_strat, payoff_matrix, adj_matrix, def_constraints, 
                     else:
                         att_actor, att_critic = att_strat(state=attacker_observation.unsqueeze(0))
 
-                    if num_att < configuration.NUM_ATTACK and state[:, 0].sum() == 0:
+                    if num_att < config.NUM_ATTACK and state[:, 0].sum() == 0:
                         def_action = torch.zeros(num_target, num_target, dtype=torch.float32, device=device)
                     elif 'GAN' in d_option:
                         def_action = GameSimulation.sample_def_action_from_res_dist(state=state, distributions=def_actor.squeeze(0),
@@ -229,9 +251,9 @@ def play_game(def_strat, att_strat, payoff_matrix, adj_matrix, def_constraints, 
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    game_gen = GameGeneration(num_target=10, graph_type='random_scale_free', num_res=5, device=device)
+    game_gen = GameGeneration(num_target=config.NUM_TARGET, graph_type='random_scale_free', num_res=config.NUM_RESOURCE, device=device)
     payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
-    #print(payoff_matrix)
-    #print(adj_matrix)
-    #print(norm_adj_matrix)
+    print(payoff_matrix)
+    print(adj_matrix)
+    print(norm_adj_matrix)
     print(def_constraints)

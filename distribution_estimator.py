@@ -1,4 +1,5 @@
 import time
+import math
 
 import torch
 import torch.nn as nn
@@ -98,13 +99,13 @@ class RealNVP(nn.Module):
 class Distribution_Estimator(nn.Module):
     def __init__(self, num_targ, num_res):
         super(Distribution_Estimator, self).__init__()
-        num_feat = round(num_res/2)
+        self.num_feat = round(num_res/2)
         self.num_targ = num_targ
         self.num_res = num_res
-        self.conv1 = nn.Conv2d(1000, 1000, num_feat+1, 2)
+        self.conv1 = nn.Conv2d(1000, 1000, self.num_feat+1, 2)
         self.bn = nn.BatchNorm2d(1000)
-        self.conv2 = nn.Conv2d(1000, 1000, round((num_feat+1)/4), 2)
-        self.ln = nn.Linear(2000, 1000)
+        self.conv2 = nn.Conv2d(1000, 1000, math.ceil((self.num_feat+1)/4), 2)
+        self.ln = nn.Linear(1000*self.num_feat, 1000)           # do self.num_feat-1 for 3 resource games
         self.sig = nn.Sigmoid()
 
     def forward(self, x):
@@ -166,14 +167,13 @@ class DistributionEstimator(object):
     def train(self, episodes=200, test=0):
         #distribution_estimator = MixtureDensityNetwork(1, 1, n_components=3)
 
-        distribution_estimator = RealNVP(nets, nett, masks, prior)
+        # distribution_estimator = RealNVP(nets, nett, masks, prior)
 
-        optimizer = torch.optim.Adam([p for p in distribution_estimator.parameters() if p.requires_grad==True], lr=1e-4)
+        # optimizer = torch.optim.Adam([p for p in distribution_estimator.parameters() if p.requires_grad==True], lr=1e-4)
 
-        #distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
-
-        #dist_optim = optim.Adam(distribution_estimator.parameters(), lr=0.001)
-        #criterion = nn.MSELoss()
+        distribution_estimator = Distribution_Estimator(self.num_targ, self.num_res).to(self.device)
+        optimizer = optim.Adam(distribution_estimator.parameters(), lr=0.001)
+        criterion = nn.MSELoss()
 
         start = time.time()
         dist_est_loss_list = []
@@ -189,25 +189,24 @@ class DistributionEstimator(object):
             actions, act_probs, act_dist, codes = dist_est(act_estimates)
 
             #noisy_moons = datasets.make_moons(n_samples=100, noise=.05)[0].astype(np.float32)
+            # a_est = act_estimates.detach().numpy()
 
-            a_est = act_estimates.detach().numpy()
+            # print("size of a_est")
+            # print(act_estimates.size())
 
-            print("size of a_est")
-            print(act_estimates.size())
-
-            loss = -distribution_estimator.log_prob(torch.from_numpy(a_est)).mean()
-            loss = Variable(loss, requires_grad = True)
+            # loss = -distribution_estimator.log_prob(torch.from_numpy(a_est)).mean()
+            # loss = Variable(loss, requires_grad = True)
         
-            optimizer.zero_grad()
+            # optimizer.zero_grad()
 
-            #dist_optim.zero_grad()
+            optimizer.zero_grad()
             dist_estimates = distribution_estimator(act_estimates.unsqueeze(0))
 
             #pi_variable, sigma_variable, mu_variable = dist_estimates
             #loss = mdn_loss_fn(pi_variable, sigma_variable, mu_variable, act_probs)
 
             #loss = MD.loss(dist_estimates, act_probs).mean()
-            #loss = criterion(dist_estimates.view(-1), act_probs.view(-1))
+            loss = criterion(dist_estimates.view(-1), act_probs.view(-1))
             dist_est_loss_list.append(loss.item())
 
             if i_episode % 10 == 9:
@@ -234,6 +233,7 @@ class DistributionEstimator(object):
             loss.backward(retain_graph=True)
             optimizer.step()
 
+            t = 1
             if t % 500 == 0:
                 print('iter %s:' % t, 'loss = %.3f' % loss)
 
@@ -253,8 +253,8 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     game_gen = GameGeneration(num_target=config.NUM_TARGET, graph_type='random_scale_free',
                               num_res=config.NUM_RESOURCE, device=device)
-    payoff_matrix, adj_matrix, norm_adj_matrix, _ = game_gen.gen_game()
-    def_constraints = [[0, 2], [1, 3], [4]]
+    payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
+    # def_constraints = [[0, 2], [1, 3], [4]]
 
     print("\nTraining Distribution Estimator for Defender Actions")
     dist_est_obj = DistributionEstimator(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,

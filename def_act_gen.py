@@ -48,7 +48,7 @@ def dist_est(act_estimates):
 def create_mask(def_cur_loc, threshold=1):
     num_res, num_tar = def_cur_loc.size()
     pos = [res.nonzero() for res in def_cur_loc]
-    mask = torch.ones(def_cur_loc.size(), dtype=torch.bool)
+    mask = torch.zeros(def_cur_loc.size(), dtype=torch.bool)
 
     for i,res in enumerate(mask):
         if pos[i] == 0:
@@ -61,7 +61,7 @@ def create_mask(def_cur_loc, threshold=1):
             val = val1 + val2
         else:
             val = [n for n in range(pos[i]-threshold, pos[i]+threshold+1)]
-        res[val] = 0
+        res[val] = 1
 
     return mask
 
@@ -73,24 +73,26 @@ class Def_Action_Generator(nn.Module):
         super(Def_Action_Generator, self).__init__()
         self.num_tar = num_tar
         self.num_res = num_res
-        self.l1 = nn.Linear(16*num_tar, 14*num_tar)
-        self.l2 = nn.Linear(14*num_tar, 12*num_tar)
-        self.l3 = nn.Linear(12*num_tar, num_tar*num_res)
-        self.bn = nn.BatchNorm1d(10)
+        self.l1 = nn.Linear((16+num_res)*num_tar, 18*num_tar)
+        self.l2 = nn.Linear(18*num_tar, 14*num_tar)
+        self.l3 = nn.Linear(14*num_tar, num_tar*num_res)
+        self.bn = nn.BatchNorm1d(num_tar)
         self.relu = nn.ReLU()
         self.sig = nn.Sigmoid()
-        self.drop = nn.Dropout(0.25)
+        self.softmax = nn.Softmax(dim=1)
         self.device = device
 
     def forward(self, x, def_cur_loc):
-        x = self.relu(self.l1(noiser(x)))
-        # x = self.drop(x)
+        x = torch.cat((x.view(16, self.num_tar), def_cur_loc))
+        x = self.relu(self.l1(noiser(x.view(-1))))
         x = self.relu(self.l2(x))
-        x = self.sig(self.bn(self.l3(x).view(self.num_res, self.num_tar)))
+        x = self.bn(self.l3(x).view(self.num_res, self.num_tar))
 
         # Meeting adajency constraints
         mask = create_mask(def_cur_loc).to(self.device)
-        x = torch.masked_fill(x, mask, value=0)
+        mask = torch.where(mask == 0, -9999.0, 0.0).float()
+        # x = torch.masked_fill(x, mask, value=0)
+        x = self.softmax(x + mask)
 
         return x
 
@@ -330,7 +332,7 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     game_gen = GameGeneration(num_target=config.NUM_TARGET, graph_type='random_scale_free',
                               num_res=config.NUM_RESOURCE, device=device)
-    payoff_matrix, adj_matrix, norm_adj_matrix, _ = game_gen.gen_game()
+    payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
     def_constraints = [[0, 2], [1, 3], [4]]
 
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
