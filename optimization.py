@@ -213,7 +213,6 @@ class Optimization(object):
         actor_loss = -actor_loss.mean()
 
         entropy_term = -(action_distribution_batch * torch.log(action_distribution_batch + 1e-10)).sum()/(num_target*num_target*self.batch_size)
-        print(critic_loss, actor_loss, entropy_term)
         loss = critic_loss + actor_loss + entropy_coeff * entropy_term
 
         # Optimize the model

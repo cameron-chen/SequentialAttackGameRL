@@ -101,7 +101,7 @@ class Distribution_Estimator(nn.Module):
         self.conv1 = nn.Conv2d(1000, 1000, self.num_feat+1, 2)
         self.bn = nn.BatchNorm2d(1000)
         self.conv2 = nn.Conv2d(1000, 1000, math.ceil((self.num_feat+1)/4), 2)
-        self.ln = nn.Linear(1000*self.num_feat, 1000)           # do self.num_feat-1 for 3 resource games
+        self.ln = nn.Linear(1000*(self.num_feat-1), 1000)           # do self.num_feat-1 for 3 resource games
         self.sig = nn.Sigmoid()
 
     def forward(self, x):

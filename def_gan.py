@@ -71,7 +71,7 @@ class Def_A2C_GAN(nn.Module):
         gen_loss_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
-        gen_lr = 0.025
+        gen_lr = 0.05
         disc_lr = 0.001
         dist_estim_lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
@@ -99,6 +99,8 @@ class Def_A2C_GAN(nn.Module):
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
                 # Update generator with discriminator
+                if invalid_count == 1000 and len(act_dist.values()) < 2:
+                    print(invalid_est[0])
                 for i,act_est in enumerate(act_estimates):                # trying with all samples -- invalid_est only for invalid samples
                     inval_samp = torch.cat((def_cur_loc, act_est))
                     if i < 1:
