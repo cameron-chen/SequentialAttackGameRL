@@ -74,6 +74,7 @@ class Def_A2C_GCN_Full(nn.Module):
         self.ln_actor1 = nn.Linear(16*self.num_target, 24*self.num_target)
         self.ln_actor2 = nn.Linear(24*self.num_target, self.num_target**self.num_res)
         self.softmax_actor = nn.Softmax(dim=2)
+        self.softmax_nomask = nn.Softmax(dim=0)
 
         self.ln_value1 = nn.Linear(16 * self.num_target, 32)
         self.ln_value2 = nn.Linear(32, 1)
@@ -82,7 +83,7 @@ class Def_A2C_GCN_Full(nn.Module):
         self.relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state, validity_mask):
+    def forward(self, state, validity_mask=torch.tensor(0)):
         batch_size = len(state)
         x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1)), 2)
 
@@ -95,9 +96,12 @@ class Def_A2C_GCN_Full(nn.Module):
 
         temp = x.unsqueeze(1).repeat(1, 1, 1)
         action_distribution = self.relu(self.ln_actor1(temp)).squeeze()
-        temp = torch.where(validity_mask == 0, -9999.0, 0.0).float()
-        temp = temp.unsqueeze(0).repeat(batch_size, 1, 1)
-        action_distribution = self.softmax_actor(self.ln_actor2(action_distribution) + temp).squeeze()
+        if validity_mask.size()[0] > 0:
+            temp = torch.where(validity_mask == 0, -9999.0, 0.0).float()
+            temp = temp.unsqueeze(0).repeat(batch_size, 1, 1)
+            action_distribution = self.softmax_actor(self.ln_actor2(action_distribution) + temp).squeeze()
+        else:
+            action_distribution = self.softmax_nomask(self.ln_actor2(action_distribution)).squeeze()
 
         # Value
         state_value = self.relu(self.ln_value1(x))

@@ -197,7 +197,7 @@ class GameSimulation(object):
         for i,pos in enumerate(def_code):
             def_action[i][pos] = 1
 
-        return def_action
+        return def_action, distributions[idx]
 
     @staticmethod
     def sample_def_action_A2C(num_attack_remain, state, trained_strategy, def_constraints, device):

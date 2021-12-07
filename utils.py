@@ -12,7 +12,7 @@ from sampling import gen_init_def_pos
 import configuration as config
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
-TransitionV = namedtuple('TransitionV', ('state', 'action', 'next_state', 'reward', 'mask'))
+TransitionV = namedtuple('TransitionV', ('state', 'action', 'next_state', 'reward', 'mask', 'prob'))
 Pure_Strategy = namedtuple('Pure_Strategy', ('type', 'trained_strategy', 'probability', 'name', 'value'))
 # seed = 42
 

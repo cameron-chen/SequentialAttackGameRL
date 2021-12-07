@@ -187,15 +187,16 @@ class Optimization(object):
         next_state_batch = torch.cat(batch.next_state)
         reward_batch = torch.cat(batch.reward)
         mask_batch = torch.cat(batch.mask)
+        prob_batch = torch.tensor(batch.prob)
 
-        action_distribution_batch, state_value_batch = policy_net(state_batch, mask_batch)
+        action_distribution_batch, state_value_batch = policy_net(state_batch) # , mask_batch)
         with torch.no_grad():
             val_moves = gen_all_valid_actions(action_batch[0], def_constraints, threshold=1)
             next_mask_batch = gen_val_mask(all_moves, val_moves).unsqueeze(0)
             for state in action_batch[1:]:
                 val_moves = gen_all_valid_actions(state, def_constraints, threshold=1)
                 next_mask_batch = torch.cat((next_mask_batch, gen_val_mask(all_moves, val_moves).unsqueeze(0)))
-            _, next_state_value_batch = target_net(next_state_batch, next_mask_batch)
+            _, next_state_value_batch = target_net(next_state_batch) # , next_mask_batch)
 
         temp = next_state_batch[:, :, 1].sum(dim=1).unsqueeze(dim=1)
         temp = torch.where(temp == self.num_step, 0., next_state_value_batch.type(torch.double))
@@ -207,12 +208,12 @@ class Optimization(object):
     
         log_distributions = torch.log(action_distribution_batch + 1e-10)
 
-        # temp_distributions = log_distributions * action_batch
-        # temp_distributions = temp_distributions.sum(dim=2).sum(dim=1)
-        actor_loss = advantage.detach() # * temp_distributions.unsqueeze(1)
+        temp_distributions = log_distributions * action_distribution_batch
+        temp_distributions = temp_distributions.sum(dim=1) # .sum(dim=2).sum(dim=1)
+        actor_loss = (advantage.detach() * temp_distributions.unsqueeze(1))/prob_batch
         actor_loss = -actor_loss.mean()
 
-        entropy_term = -(action_distribution_batch * torch.log(action_distribution_batch + 1e-10)).sum()/(num_target*num_target*self.batch_size)
+        entropy_term = -(action_distribution_batch * log_distributions).sum()/(num_target*num_target*self.batch_size)
         loss = critic_loss + actor_loss + entropy_coeff * entropy_term
 
         # Optimize the model

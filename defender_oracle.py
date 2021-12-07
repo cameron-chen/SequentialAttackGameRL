@@ -345,7 +345,7 @@ class DefenderOracle(object):
                     val_moves = gen_all_valid_actions(def_cur_loc, def_constraints)
                     val_mask = gen_val_mask(all_moves, val_moves)
                     actor, critic = policy_net(state.unsqueeze(0), val_mask)
-                    def_action = GameSimulation.sample_def_action_full(actor, all_moves)
+                    def_action, def_prob = GameSimulation.sample_def_action_full(actor, all_moves)
 
                 # -------------------------------- Start sample attacker action --------------------------------
                 if att_pure_strategy.type == 'uniform':
@@ -371,18 +371,33 @@ class DefenderOracle(object):
                                                     payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix)
                 next_att_observation = GameSimulation.gen_next_observation(observation=attacker_observation,
                                                                            def_action=def_action, att_action=att_action)
-
+                '''
                 # Store the transition in memory
                 def_immediate_utility = torch.tensor([def_immediate_utility], device=self.device)
                 memory.push(state.unsqueeze(0), def_action.unsqueeze(0), next_state.unsqueeze(0),
-                            def_immediate_utility.unsqueeze(0), val_mask.unsqueeze(0))
+                            def_immediate_utility.unsqueeze(0), val_mask.unsqueeze(0), def_prob)
 
                 # Perform one step of the optimization (on the target network)
                 loss = optimization.optimize_Def_A2C_Full(memory=memory, policy_net=policy_net, target_net=target_net, all_moves=all_moves,
                                                         def_constraints=self.def_constraints, optimizer=optimizer, entropy_coeff=entropy_coeff)
+                '''
+                _, expected_state_action_value = target_net(state.unsqueeze(0) , val_mask)
+                advantage = expected_state_action_value - critic
 
-                print("Payoff loss:", loss)
-                payoff_loss.append(loss)
+                critic_loss = F.mse_loss(critic, expected_state_action_value)
+
+                log_distributions = torch.log(actor + 1e-10)
+
+                temp_distributions = log_distributions * actor
+                temp_distributions = temp_distributions.sum()
+                actor_loss = advantage.detach() * temp_distributions
+                actor_loss = -actor_loss.mean()
+
+                entropy_term = -(actor * torch.log(actor + 1e-10)).sum()
+                loss = critic_loss + actor_loss + entropy_coeff * entropy_term
+                
+                print("Payoff loss:", loss.item())
+                payoff_loss.append(loss.item())
 
                 # Move to the next state
                 state = next_state
@@ -886,10 +901,10 @@ class DefenderOracle(object):
                 d_prob_list.append(f_actor[all_moves.index(gan_move)].item())
 
                 print("Best move:", all_moves[torch.argmax(f_actor)])
-                print("Move probability:", f_actor[torch.argmax(f_actor)].item())
-                f_prob_list.append(f_actor[torch.argmax(f_actor)].item())
+                print("Move probability:", max(f_actor).item())
+                f_prob_list.append(max(f_actor).item())
 
-                f_def_action = GameSimulation.sample_def_action_full(f_actor, all_moves)
+                f_def_action, f_def_prob = GameSimulation.sample_def_action_full(f_actor, all_moves)
                 _, f_def_util, f_att_util \
                     = GameSimulation.gen_next_state_from_def_res(state=state, def_action=f_def_action, att_action=att_action,
                                                                 payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix)
@@ -947,18 +962,18 @@ def test():
     print("\nTraining A2C-GCN-LSTM")
     new_def_lstm = def_oracle.train(option='A2C-GCN-LSTM', test=1)
     '''
-    
+
     print("\nTraining A2C Defender Oracle with Full Action Space")
     def_oracle_a2c = DefenderOracle(att_strategy=att_mixed_strategy, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
     all_moves = gen_all_actions(config.NUM_TARGET, config.NUM_RESOURCE)
-    new_def, _, _, _ = def_oracle_a2c.train(option='A2C-GCN-Full', all_moves=all_moves)
+    new_def, def_utils, atk_utils, _ = def_oracle_a2c.train(option='A2C-GCN-Full', all_moves=all_moves)
     def_a2c = new_def[-1][0]
     
     print("\nTraining Defender Discriminator")
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
-    discriminator = disc_obj.train(episodes=1600)
+    discriminator = disc_obj.train(episodes=1600)               # do episode=1600 for 3 resource game
     # discriminator = disc_obj.initial()
 
     print("\nTraining Distribution Estimator")
@@ -971,15 +986,17 @@ def test():
     def_oracle_gan = DefenderOracle(att_strategy=att_mixed_strategy, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
     act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, device).to(device)
-    def_gan_list, def_utils_gan, atk_utils_gan, attempts_list_t, num_acts_list_t \
+    def_gan_list, def_utils, atk_utils, attempts_list, num_acts_list \
         = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1)
     def_gan = def_gan_list[-1][0]
 
     def_utils, atk_utils, attempts_list, num_acts_list, d_prob_list, f_prob_list, f_def_utils \
-        = def_oracle_gan.compare_a2c_gan(def_a2c, def_gan, all_moves)
-
+         = def_oracle_gan.compare_a2c_gan(def_a2c, def_gan, all_moves)
+    
+    print("Average A2C utility:", sum(f_def_utils)/len(f_def_utils))
+    print("Average GAN utility:", sum(def_utils)/len(def_utils))
     print(round(((time.time() - start) / 60), 4), 'min')
-
+    
     plt.figure(figsize=(20, 10))
     plt.title("Defender/Attacker Utilities")
     plt.xlabel("Episode")
@@ -988,7 +1005,7 @@ def test():
     plt.plot(atk_utils, label="Attacker Utility")
     plt.legend()
     plt.show()
-
+    
     plt.figure(figsize=(20, 10))
     plt.title("Defender # of Tries for Valid Action")
     plt.xlabel("Time Step")

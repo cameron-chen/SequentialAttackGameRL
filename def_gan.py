@@ -1,5 +1,6 @@
 import sys
 import time
+import math
 
 import torch
 import torch.nn as nn
@@ -71,7 +72,7 @@ class Def_A2C_GAN(nn.Module):
         gen_loss_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
-        gen_lr = 0.05
+        gen_lr = 0.025
         disc_lr = 0.001
         dist_estim_lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
@@ -91,7 +92,7 @@ class Def_A2C_GAN(nn.Module):
             invalid_est = []
             for i,act in enumerate(actions):
                 meet_constraints = check_constraints(act, self.def_constraints, 
-                                                         self.threshold)
+                                                     self.threshold)
                 if not meet_constraints:
                     invalid_count += 1
                     invalid_act.add(act)
@@ -108,7 +109,12 @@ class Def_A2C_GAN(nn.Module):
                     else:
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
-                gen_loss = self.disc_criterion(inval_out, true_labels)/(len(act_dist.values()))
+                prob_ent = 0
+                for p in act_probs:
+                    prob_ent += p*(-math.log(p))
+                if prob_ent == 0:
+                    prob_ent = 1
+                gen_loss = self.disc_criterion(inval_out, true_labels)/prob_ent # /(len(act_dist.values())**2)
                 if test:
                     print("\nAttempts:", attempt)
                     print("Invalid Samples:", invalid_count)
