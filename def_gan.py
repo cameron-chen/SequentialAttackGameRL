@@ -109,9 +109,7 @@ class Def_A2C_GAN(nn.Module):
                     else:
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
-                prob_ent = 0
-                for p in act_probs:
-                    prob_ent += p*(-math.log(p))
+                prob_ent = sum([p*(-math.log(p)) for p in act_probs])
                 if prob_ent == 0:
                     prob_ent = 1
                 gen_loss = self.disc_criterion(inval_out, true_labels)/prob_ent # /(len(act_dist.values())**2)
