@@ -154,11 +154,8 @@ class Def_A2C_GAN(nn.Module):
                         param_group['lr'] = disc_lr
 
                     if disc_attempt > 50:
-                        prob = torch.tensor(1/len(act_dist.values()))
-                        if test:
-                            return 0, state_value, prob, attempt, len(act_dist.values())
-                        else:
-                            return 0, state_value, prob
+                        break
+                    disc_attempt += 1
             else:
                 print("\nAttempts:", attempt)
                 print("Invalid Samples:", invalid_count)
