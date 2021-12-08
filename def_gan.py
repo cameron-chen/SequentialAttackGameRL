@@ -72,7 +72,7 @@ class Def_A2C_GAN(nn.Module):
         gen_loss_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
-        gen_lr = 0.025
+        gen_lr = 0.001
         disc_lr = 0.001
         dist_estim_lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
@@ -241,7 +241,7 @@ if __name__ == '__main__':
     dist_estimator = dist_estim_obj.initial()
 
     state = torch.zeros(config.NUM_TARGET, 2, dtype=torch.int32, device=device)
-    def_cur_loc = gen_init_def_pos(config.NUM_TARGET, config.NUM_RESOURCE, def_constraints, threshold=1)
+    def_cur_loc = gen_init_def_pos(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, def_constraints, threshold=1)
     for t, res in enumerate(def_cur_loc):
         state[(res == 1).nonzero(), 0] += int(sum(res))
 
@@ -252,7 +252,7 @@ if __name__ == '__main__':
     for i in range(100):
         start = time.time()
         print("\nGAN", i + 1)
-        act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, device).to(device)
+        act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, device).to(device)
         gen = Def_A2C_GAN(payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                           norm_adj_matrix=norm_adj_matrix, num_feature=config.NUM_FEATURE,
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
