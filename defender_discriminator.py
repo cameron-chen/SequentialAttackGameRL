@@ -92,10 +92,10 @@ class DefDiscriminator(object):
         self.threshold = threshold
 
     def gen_data(self, sample_size, samples=[]):
-        return gen_samples_greedy(self.num_targ, self.num_res, self.def_constraints, self.threshold, sample_size, samples)
+        return gen_samples_greedy(self.num_targ, self.num_res, self.adj_matrix, self.def_constraints, self.threshold, sample_size, samples)
 
     def update_data(self, data_set, sample_size, samples):
-        add_set, samples = gen_samples_greedy(self.num_targ, self.num_res, self.def_constraints, self.threshold,
+        add_set, samples = gen_samples_greedy(self.num_targ, self.num_res, self.adj_matrix, self.def_constraints, self.threshold,
                                               sample_size, samples)
         return data_set + add_set, samples
 

@@ -153,7 +153,7 @@ class DistributionEstimator(object):
         self.def_constraints = def_constraints
         self.device = device
 
-        self.act_gen = Def_Action_Generator(self.num_targ, self.num_res, device).to(device)
+        self.act_gen = Def_Action_Generator(self.num_targ, self.num_res, adj_matrix, device).to(device)
         self.def_samp_gen = Def_A2C_Sample_Generator(payoff_matrix, adj_matrix, norm_adj_matrix, num_feature, num_res,
                                                     self.act_gen, device).to(device)
 

@@ -45,22 +45,13 @@ def dist_est(act_estimates):
     return actions, torch.tensor(act_probs, device=device), act_dist, codes
 
 
-def create_mask(def_cur_loc, threshold=1):
+def create_mask(def_cur_loc, adj_matrix, threshold=1):
     num_res, num_tar = def_cur_loc.size()
-    pos = [res.nonzero() for res in def_cur_loc]
+    pos = [res.nonzero().item() for res in def_cur_loc]
     mask = torch.zeros(def_cur_loc.size(), dtype=torch.bool)
 
     for i,res in enumerate(mask):
-        if pos[i] == 0:
-            val1 = [n for n in range(0, threshold+1)]
-            val2 = [n for n in range(num_tar-threshold, num_tar)]
-            val = val1 + val2
-        elif pos[i] == num_tar-1:
-            val1 = [n for n in range(0, threshold)]
-            val2 = [n for n in range(num_tar-1-threshold, num_tar)]
-            val = val1 + val2
-        else:
-            val = [n for n in range(pos[i]-threshold, pos[i]+threshold+1)]
+        val = [n for n in range(num_tar) if adj_matrix[pos[i]][n] != config.MIN_VALUE]
         res[val] = 1
 
     return mask
@@ -69,10 +60,11 @@ def noiser(input, device=torch.device("cuda" if torch.cuda.is_available() else "
     return input + torch.randn(input.size()).to(device)
 
 class Def_Action_Generator(nn.Module):
-    def __init__(self, num_tar, num_res, device):
+    def __init__(self, num_tar, num_res, adj_matrix, device):
         super(Def_Action_Generator, self).__init__()
         self.num_tar = num_tar
         self.num_res = num_res
+        self.adj_matrix = adj_matrix
         self.l1 = nn.Linear((16+num_res)*num_tar, 18*num_tar)
         self.l2 = nn.Linear(18*num_tar, 14*num_tar)
         self.l3 = nn.Linear(14*num_tar, num_tar*num_res)
@@ -89,9 +81,8 @@ class Def_Action_Generator(nn.Module):
         x = self.bn(self.l3(x).view(self.num_res, self.num_tar))
 
         # Meeting adajency constraints
-        mask = create_mask(def_cur_loc).to(self.device)
+        mask = create_mask(def_cur_loc, self.adj_matrix)
         mask = torch.where(mask == 0, -9999.0, 0.0).float()
-        # x = torch.masked_fill(x, mask, value=0)
         x = self.softmax(x + mask)
 
         return x
@@ -203,7 +194,7 @@ class DefActionGen():
         self.graph_conv = Def_A2C_Graph_Convolutor(payoff_matrix, adj_matrix, norm_adj_matrix, num_feature, num_res, device)
 
     def train(self, episodes=100, test=0):
-        act_gen = Def_Action_Generator(self.num_targ, self.num_res, self.device)
+        act_gen = Def_Action_Generator(self.num_targ, self.num_res, self.adj_matrix, self.device)
         attempt_list = []
         act_list = []
 
@@ -218,7 +209,7 @@ class DefActionGen():
             disc_optimizer = optim.Adam(self.discriminator.parameters(), disc_lr)
 
             state = torch.zeros(self.num_targ, 2, dtype=torch.int32, device=device)
-            def_cur_loc = gen_init_def_pos(self.num_targ, self.num_res, def_constraints, threshold=1)
+            def_cur_loc = gen_init_def_pos(self.num_targ, self.num_res, self.adj_matrix, def_constraints, threshold=1)
             for t, res in enumerate(def_cur_loc):
                 state[(res == 1).nonzero(), 0] += int(sum(res))
 
@@ -246,9 +237,9 @@ class DefActionGen():
                 invalid_est = []
                 for i,act in enumerate(actions):
                     meet_constraints = False
-                    val = check_move(def_cur_loc, act, self.threshold)
+                    val = check_move(def_cur_loc, act, self.adj_matrix, self.threshold)
                     if val:
-                        meet_constraints = check_constraints(act, self.def_constraints, 
+                        meet_constraints = check_constraints(act, self.adj_matrix, self.def_constraints, 
                                                             self.threshold)
                     if not meet_constraints:
                         invalid_count += 1
@@ -333,11 +324,11 @@ if __name__ == '__main__':
     game_gen = GameGeneration(num_target=config.NUM_TARGET, graph_type='random_scale_free',
                               num_res=config.NUM_RESOURCE, device=device)
     payoff_matrix, adj_matrix, norm_adj_matrix, def_constraints = game_gen.gen_game()
-    def_constraints = [[0, 2], [1, 3], [4]]
+    # def_constraints = [[0, 2], [1, 3], [4]]
 
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
-    def_disc = disc_obj.train('CNN')
+    def_disc = disc_obj.train(episodes=1600, option='CNN')
 
     act_gen_obj = DefActionGen(config.NUM_TARGET, config.NUM_RESOURCE, config.NUM_FEATURE, payoff_matrix,
                                 adj_matrix, norm_adj_matrix, def_constraints, def_disc, device)

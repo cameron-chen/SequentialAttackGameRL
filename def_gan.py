@@ -51,7 +51,7 @@ class Def_A2C_GAN(nn.Module):
         self.dist_estimator = dist_estimator
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state, def_cur_loc, test=0):
+    def forward(self, state, def_cur_loc, test=0, nc=0, ent=0):
         batch_size = len(state)
         noise = torch.rand((1, state.size(1), self.noise_feat)).to(self.device)
         x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1), noise), 2)
@@ -91,8 +91,11 @@ class Def_A2C_GAN(nn.Module):
             invalid_act = set()
             invalid_est = []
             for i,act in enumerate(actions):
-                meet_constraints = check_constraints(act, self.def_constraints, 
-                                                     self.threshold)
+                if nc:
+                    meet_constraints = True
+                else:
+                    meet_constraints = check_constraints(act, self.adj_matrix, self.def_constraints,
+                                                        self.threshold)
                 if not meet_constraints:
                     invalid_count += 1
                     invalid_act.add(act)
@@ -100,8 +103,6 @@ class Def_A2C_GAN(nn.Module):
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
                 # Update generator with discriminator
-                if invalid_count == 1000 and len(act_dist.values()) < 2:
-                    print(invalid_est[0])
                 for i,act_est in enumerate(act_estimates):                # trying with all samples -- invalid_est only for invalid samples
                     inval_samp = torch.cat((def_cur_loc, act_est))
                     if i < 1:
@@ -110,7 +111,7 @@ class Def_A2C_GAN(nn.Module):
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
                 prob_ent = sum([p*(-math.log(p)) for p in act_probs])
-                if prob_ent == 0:
+                if not ent or prob_ent == 0:
                     prob_ent = 1
                 gen_loss = self.disc_criterion(inval_out, true_labels)/prob_ent # /(len(act_dist.values())**2)
                 if test:
