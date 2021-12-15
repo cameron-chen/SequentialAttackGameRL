@@ -90,6 +90,7 @@ class Def_A2C_GAN(nn.Module):
             invalid_count = 0
             invalid_act = set()
             invalid_est = []
+
             for i,act in enumerate(actions):
                 if nc:
                     meet_constraints = True
@@ -100,6 +101,15 @@ class Def_A2C_GAN(nn.Module):
                     invalid_count += 1
                     invalid_act.add(act)
                     invalid_est.append(act_estimates[i])
+                
+            valid_count = len(actions) - invalid_count
+            w_0 = (valid_count + invalid_count) / (2.0 * valid_count)
+            w_1 = (valid_count + invalid_count) / (2.0 * invalid_count)
+            class_weights=torch.FloatTensor([w_0, w_1]).cuda()
+
+            class_weight_loss = nn.CrossEntropyLoss(weight=class_weights)
+
+
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
                 # Update generator with discriminator
@@ -113,7 +123,7 @@ class Def_A2C_GAN(nn.Module):
                 prob_ent = sum([p*(-math.log(p)) for p in act_probs])
                 if not ent or prob_ent == 0:
                     prob_ent = 1
-                gen_loss = self.disc_criterion(inval_out, true_labels)/prob_ent # /(len(act_dist.values())**2)
+                gen_loss = self.disc_criterion(inval_out, true_labels)/prob_ent + class_weight_loss # /(len(act_dist.values())**2)
                 if test:
                     print("\nAttempts:", attempt)
                     print("Invalid Samples:", invalid_count)
