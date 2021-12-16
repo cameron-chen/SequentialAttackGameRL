@@ -109,7 +109,7 @@ class Def_A2C_GAN(nn.Module):
             else:
                 w_1 = (valid_count + invalid_count) / (2.0)
             w_0 = (valid_count + invalid_count) / (2.0 * valid_count)
-            class_weights=torch.FloatTensor([w_0, w_1]).cuda()
+            class_weights=torch.FloatTensor([w_0, w_1])
 
             class_weight_loss = nn.CrossEntropyLoss(weight=class_weights)
 
