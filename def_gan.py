@@ -127,7 +127,7 @@ class Def_A2C_GAN(nn.Module):
                 prob_ent = sum([p*(-math.log(p)) for p in act_probs])
                 if not ent or prob_ent == 0:
                     prob_ent = 1
-                gen_loss = (self.disc_criterion(inval_out, true_labels)/prob_ent) + class_weight_loss # /(len(act_dist.values())**2)
+                gen_loss = (self.disc_criterion(inval_out, true_labels)/prob_ent) * class_weight_loss # /(len(act_dist.values())**2)
                 if test:
                     print("\nAttempts:", attempt)
                     print("Invalid Samples:", invalid_count)
