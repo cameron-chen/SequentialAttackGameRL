@@ -1079,7 +1079,7 @@ def test():
     plt.show()
     '''
     plt.figure(figsize=(20, 10))
-    plt.title("Generator Loss: Discriminator BCE vs. Entropy from Distribution Estimator")
+    plt.title("Discriminator BCE vs. Entropy from Distribution Estimator")
     plt.xlabel("Iteration")
     plt.ylabel("Value")
     plt.plot(gl_list, label="Discriminator BCE Loss")
