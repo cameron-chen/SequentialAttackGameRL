@@ -634,7 +634,7 @@ class DefenderOracle(object):
 
         return def_avg_utils  # best_policy_net, best_def_util, att_util
 
-    def train_A2C_GAN(self, policy_net, update_layers, lr, entropy_coeff, test=None, nc=0, ent=0, loss=1):
+    def train_A2C_GAN(self, policy_net, update_layers, lr, entropy_coeff, test=None, nc=0, ent=1, loss=1):
         # def_mixed strategy is a tensor, each element is a tuple <type, >
         # torch.autograd.set_detect_anomaly(True)
         num_target = self.payoff_matrix.size(0)
@@ -650,6 +650,8 @@ class DefenderOracle(object):
         payoff_loss = []        # loss from actor-critic
         attempts_list = []     # number of attempts per episode to generate a valid defender action
         num_acts_list = []     # number of unique actions generated per episode
+        gl_list = []
+        gen_ent_list = []
 
         for i_episode in range(config.NUM_EPISODE):
             if test: print("\nEpisode", i_episode)
@@ -688,7 +690,8 @@ class DefenderOracle(object):
                     print("\nGenerating Defender action...", time_step)
                     total_attempts = 0
                     if test:
-                        def_action, critic, prob, attempts, num_actions = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
+                        def_action, critic, prob, attempts, num_actions, gl, gen_ent \
+                             = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
                     else:
                         def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
                     redo = 1
@@ -696,7 +699,8 @@ class DefenderOracle(object):
                     while not torch.is_tensor(def_action):
                         if test: 
                             print("Time step", time_step, ": redo", redo)
-                            def_action, critic, prob, attempts, num_actions = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
+                            def_action, critic, prob, attempts, num_actions, gl, gen_ent \
+                                 = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
                         else:
                             def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
                         redo += 1
@@ -707,6 +711,8 @@ class DefenderOracle(object):
 
                     attempts_list.append(total_attempts)
                     num_acts_list.append(num_actions)
+                    gl_list += gl
+                    gen_ent_list += gen_ent
 
                 # -------------------------------- Start sample attacker action --------------------------------
                 if att_pure_strategy.type == 'uniform':
@@ -781,7 +787,7 @@ class DefenderOracle(object):
                 param_group['lr'] = lr
 
         if test:
-            return def_set, def_utils, atk_utils, attempts_list, num_acts_list
+            return def_set, def_utils, atk_utils, attempts_list, num_acts_list, gl_list, gen_ent_list
         else:
             return def_set
 
@@ -955,14 +961,14 @@ def test():
     print("\nTraining A2C-GCN-LSTM")
     new_def_lstm = def_oracle.train(option='A2C-GCN-LSTM', test=1)
     '''
-    
+    '''
     print("\nTraining A2C Defender Oracle with Full Action Space")
     def_oracle_a2c = DefenderOracle(att_strategy=att_mixed_strategy, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
     all_moves = gen_all_actions(config.NUM_TARGET, config.NUM_RESOURCE)
     new_def, def_utils, atk_utils, _ = def_oracle_a2c.train(option='A2C-GCN-Full', all_moves=all_moves)
     def_a2c = new_def[-1][0]
-    
+    '''
     print("\nTraining Defender Discriminator")
     disc_obj = DefDiscriminator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, norm_adj_matrix,
                                 def_constraints, device, threshold=1)
@@ -980,7 +986,7 @@ def test():
     def_oracle_gan = DefenderOracle(att_strategy=att_mixed_strategy, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
     act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, device).to(device)
-    def_gan_list, def_utils, atk_utils, attempts_list, num_acts_list \
+    def_gan_list, def_utils, atk_utils, attempts_list, num_acts_list, gl_list, gen_ent_list \
         = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1)
     def_gan = def_gan_list[-1][0]
     '''
@@ -1011,12 +1017,13 @@ def test():
     def_gan_list, def_utils_nrl, atk_utils, attempts_nrl, num_acts_nrl \
         = def_gan_nc.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, nc=0, ent=1, loss=0)
     '''
-    
+    '''
     def_utils, atk_utils, attempts_list, num_acts_list, d_prob_list, f_prob_list, f_def_utils \
          = def_oracle_gan.compare_a2c_gan(def_a2c, def_gan, all_moves)
     
     print("Average A2C utility:", sum(f_def_utils)/len(f_def_utils))
     print("Average GAN utility:", sum(def_utils)/len(def_utils))
+    '''
     print(round(((time.time() - start) / 60), 4), 'min')
     
     plt.figure(figsize=(20, 10))
@@ -1052,6 +1059,7 @@ def test():
     plt.legend()
     plt.show()
     
+    '''
     plt.figure(figsize=(20, 10))
     plt.title("Utilities between Full Action A2C and A2C-GAN")
     plt.xlabel("Episode")
@@ -1069,7 +1077,15 @@ def test():
     plt.plot(d_prob_list, label="GAN action probability in A2C distribution")
     plt.legend()
     plt.show()
-    
+    '''
+    plt.figure(figsize=(20, 10))
+    plt.title("Generator Loss: Discriminator BCE vs. Entropy from Distribution Estimator")
+    plt.xlabel("Iteration")
+    plt.ylabel("Value")
+    plt.plot(gl_list, label="Discriminator BCE Loss")
+    plt.plot(gen_ent_list, label="Distribution Estimator Entropy")
+    plt.legend()
+    plt.show()
     '''
     # Save trained model
     path1 = "defender_2_A2C_GCN_state_dict.pth"

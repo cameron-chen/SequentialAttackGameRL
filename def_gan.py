@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from utils import GameGeneration
 from graph_convolution import GraphConvolution
 from defender_discriminator import DefDiscriminator
-from def_act_gen import dist_est, Def_Action_Generator
+from def_act_gen import dist_est, action_dist, Def_Action_Generator
 from distribution_estimator import DistributionEstimator
 from sampling import check_move, check_constraints, gen_init_def_pos
 import configuration as config
@@ -51,7 +51,7 @@ class Def_A2C_GAN(nn.Module):
         self.dist_estimator = dist_estimator
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state, def_cur_loc, test=0, nc=0, ent=0):
+    def forward(self, state, def_cur_loc, test=0, nc=0, ent=1):
         batch_size = len(state)
         noise = torch.rand((1, state.size(1), self.noise_feat)).to(self.device)
         x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1), noise), 2)
@@ -70,6 +70,8 @@ class Def_A2C_GAN(nn.Module):
         attempt = 1
         invalid_list = []
         gen_loss_list = []
+        gl_list = []
+        gen_ent_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
         gen_lr = 0.001
@@ -85,7 +87,7 @@ class Def_A2C_GAN(nn.Module):
                 act_estimates = torch.cat((act_estimates, self.act_gen(x.detach().squeeze(), def_cur_loc)))
             act_estimates = act_estimates.view(1000, self.num_resource, self.num_target)
 
-            actions, act_probs, act_dist, _ = dist_est(act_estimates)
+            actions, act_probs, act_dist, act_codes = dist_est(act_estimates)
 
             invalid_count = 0
             invalid_act = set()
@@ -103,17 +105,13 @@ class Def_A2C_GAN(nn.Module):
                     invalid_est.append(act_estimates[i])
                 
             valid_count = len(actions) - invalid_count
-
             if invalid_count > 0:
                 w_1 = (valid_count + invalid_count) / (2.0 * invalid_count)
             else:
                 w_1 = (valid_count + invalid_count) / (2.0)
             w_0 = (valid_count + invalid_count) / (2.0 * valid_count)
             class_weights=torch.FloatTensor([w_0, w_1])
-
             class_weight_loss = nn.CrossEntropyLoss(weight=class_weights)
-
-
             
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
                 # Update generator with discriminator
@@ -124,10 +122,37 @@ class Def_A2C_GAN(nn.Module):
                     else:
                         inval_out = torch.cat((inval_out, self.discriminator(inval_samp)))
                 true_labels = torch.ones(inval_out.size()).to(self.device)
-                prob_ent = sum([p*(-math.log(p)) for p in act_probs])
-                if not ent or prob_ent == 0:
-                    prob_ent = 1
-                gen_loss = (self.disc_criterion(inval_out, true_labels)/prob_ent) # + class_weight_loss # /(len(act_dist.values())**2)
+
+                dist_estim_attempt = 1
+                dist_estim_lr = 0.001
+                distribution_check = False
+                while not distribution_check:
+                    dist_estim_optimizer.zero_grad()
+                    dist_estimates = self.dist_estimator(act_estimates.detach().unsqueeze(0))
+
+                    dist_estim_loss = self.dist_estim_criterion(dist_estimates, act_probs)
+                    dist_estim_loss_list.append(dist_estim_loss.item())
+                    if test: print("Distribution Estimator Loss:", dist_estim_loss.item())
+
+                    dist_estim_loss.backward()
+                    dist_estim_optimizer.step()
+
+                    if dist_estim_loss < 0.05:
+                        distribution_check = True
+                    elif dist_estim_attempt > 25:
+                        distribution_check = True
+
+                    dist_estim_lr = dist_estim_lr * 0.95
+                    for param_group in dist_estim_optimizer.param_groups:
+                        param_group['lr'] = dist_estim_lr
+
+                    dist_estim_attempt += 1
+
+                dist_probs = action_dist(dist_estimates.detach(), act_codes)
+                ent_coeff = 1.0
+                prob_ent = sum([p*(-math.log(p)) for p in dist_probs])
+                gl = self.disc_criterion(inval_out, true_labels)
+                gen_loss = gl + (prob_ent * ent_coeff) # + class_weight_loss # /(len(act_dist.values())**2)
                 if test:
                     print("\nAttempts:", attempt)
                     print("Invalid Samples:", invalid_count)
@@ -139,6 +164,8 @@ class Def_A2C_GAN(nn.Module):
                 attempt += 1
                 invalid_list.append(invalid_count)
                 gen_loss_list.append(gen_loss.item())
+                gl_list.append(gl.item())
+                gen_ent_list.append(prob_ent.item())
 
                 # Update discriminator
                 disc_err_rate = 1.0
@@ -183,7 +210,7 @@ class Def_A2C_GAN(nn.Module):
             if attempt > 25 and invalid_count >= invalid_list[-2]:
                 prob = torch.tensor(1/len(act_dist.values()))
                 if test:
-                    return 0, state_value, prob, attempt, len(act_dist.values())
+                    return 0, state_value, prob, attempt, len(act_dist.values()), gl_list, gen_ent_list
                 else:
                     return 0, state_value, prob
 
@@ -191,8 +218,6 @@ class Def_A2C_GAN(nn.Module):
         dist_estim_attempt = 1
         dist_estim_lr = 0.001
         distribution_check = False
-        # act_estimates = torch.cat((act_estimates, act_estimates)).view(1000, self.num_resource, self.num_target)
-        # target_probs = act_probs + act_probs
         while not distribution_check:
             dist_estim_optimizer.zero_grad()
             dist_estimates = self.dist_estimator(act_estimates.detach().unsqueeze(0))
@@ -226,7 +251,7 @@ class Def_A2C_GAN(nn.Module):
                 break
 
         if test:
-            return select_act, state_value, select_prob, attempt, len(act_dist.values())
+            return select_act, state_value, select_prob, attempt, len(act_dist.values()), gl_list, gen_ent_list
         else:
             return select_act, state_value, select_prob
 
@@ -269,11 +294,11 @@ if __name__ == '__main__':
                           num_resource=config.NUM_RESOURCE, def_constraints=def_constraints,
                           act_gen=act_gen, discriminator=def_disc, dist_estimator=dist_estimator, 
                           device=device).to(device)
-        actor, critic, prob, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+        actor, critic, prob, attempt, num_actions, gl_list, gen_ent_list = gen(state.unsqueeze(0), def_cur_loc, test=1)
         j = 1
         while not torch.is_tensor(actor):
             print("\nGAN", i+1, "redo", j)
-            actor, critic, prob, attempt, num_actions = gen(state.unsqueeze(0), def_cur_loc, test=1)
+            actor, critic, prob, attempt, num_actions, gl_list, gen_ent_list = gen(state.unsqueeze(0), def_cur_loc, test=1)
             j += 1
         attempt_list.append(attempt)
         action_num_list.append(num_actions)

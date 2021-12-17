@@ -45,6 +45,17 @@ def dist_est(act_estimates):
     return actions, torch.tensor(act_probs, device=device), act_dist, codes
 
 
+def action_dist(dist_estimates, act_codes):
+    act_d = dict()
+    for i,act in enumerate(act_codes):
+        if act in act_d.keys():
+            act_d[act].append(dist_estimates[i])
+        else:
+            act_d[act] = [dist_estimates[i]]
+    
+    return [(sum(p)/len(p)) for p in act_d.values()]
+
+
 def create_mask(def_cur_loc, adj_matrix, threshold=1):
     num_res, num_tar = def_cur_loc.size()
     pos = [res.nonzero().item() for res in def_cur_loc]
