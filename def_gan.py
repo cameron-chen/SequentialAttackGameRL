@@ -103,7 +103,7 @@ class Def_A2C_GAN(nn.Module):
                     invalid_count += 1
                     invalid_act.add(act)
                     invalid_est.append(act_estimates[i])
-                
+            '''
             valid_count = len(actions) - invalid_count
             if invalid_count > 0:
                 w_1 = (valid_count + invalid_count) / (2.0 * invalid_count)
@@ -112,7 +112,7 @@ class Def_A2C_GAN(nn.Module):
             w_0 = (valid_count + invalid_count) / (2.0 * valid_count)
             class_weights=torch.FloatTensor([w_0, w_1])
             class_weight_loss = nn.CrossEntropyLoss(weight=class_weights)
-            
+            '''
             if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
                 # Update generator with discriminator
                 for i,act_est in enumerate(act_estimates):                # trying with all samples -- invalid_est only for invalid samples
