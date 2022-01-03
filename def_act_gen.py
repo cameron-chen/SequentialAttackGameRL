@@ -53,7 +53,7 @@ def action_dist(dist_estimates, act_codes):
         else:
             act_d[act] = [dist_estimates[i]]
     
-    return [(sum(p)/len(p)) for p in act_d.values()]
+    return nn.Softmax()(torch.tensor([(sum(p)/len(p)) for p in act_d.values()]))
 
 
 def create_mask(def_cur_loc, adj_matrix, threshold=1):

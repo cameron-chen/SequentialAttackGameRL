@@ -101,7 +101,7 @@ class Distribution_Estimator(nn.Module):
         self.conv1 = nn.Conv2d(1000, 1000, self.num_feat+1, 2)
         self.bn = nn.BatchNorm2d(1000)
         self.conv2 = nn.Conv2d(1000, 1000, math.ceil((self.num_feat+1)/4), 2)
-        self.ln = nn.Linear(1000*(self.num_feat-1), 1000)           # do self.num_feat-1 for 3 resource games
+        self.ln = nn.Linear(1000*self.num_feat, 1000)           # do self.num_feat-1 for 3 resource games
         self.sig = nn.Sigmoid()
 
     def forward(self, x):
@@ -177,7 +177,7 @@ class DistributionEstimator(object):
         for i_episode in range(episodes):
 
             state = torch.zeros(self.num_targ, 2, dtype=torch.int32, device=self.device)
-            def_cur_loc = gen_init_def_pos(self.num_targ, self.num_res, self.def_constraints, threshold=1)
+            def_cur_loc = gen_init_def_pos(self.num_targ, self.num_res, self.adj_matrix, self.def_constraints, threshold=1)
             for t, res in enumerate(def_cur_loc):
                 state[(res == 1).nonzero(), 0] += int(sum(res))
 

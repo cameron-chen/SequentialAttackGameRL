@@ -51,7 +51,7 @@ class Def_A2C_GAN(nn.Module):
         self.dist_estimator = dist_estimator
 
     # action batch: size of BATCH_SIZE * NUM_TARGET * NUM_TARGET
-    def forward(self, state, def_cur_loc, test=0, nc=0, ent=1):
+    def forward(self, state, def_cur_loc, test=0, ent=1.0, nc=0):
         batch_size = len(state)
         noise = torch.rand((1, state.size(1), self.noise_feat)).to(self.device)
         x = torch.cat((state, self.payoff_matrix.unsqueeze(0).repeat(batch_size, 1, 1), noise), 2)
@@ -74,7 +74,7 @@ class Def_A2C_GAN(nn.Module):
         gen_ent_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
-        gen_lr = 0.001
+        gen_lr = 0.05
         disc_lr = 0.001
         dist_estim_lr = 0.001
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
@@ -113,7 +113,7 @@ class Def_A2C_GAN(nn.Module):
             class_weights=torch.FloatTensor([w_0, w_1])
             class_weight_loss = nn.CrossEntropyLoss(weight=class_weights)
             '''
-            if invalid_count > (len(actions)*0.25):        # Threshold: 25% invalid actions
+            if invalid_count > (len(actions)*0.25): # or len(act_dist.values()) < 5:        # Threshold: 25% invalid actions
                 # Update generator with discriminator
                 for i,act_est in enumerate(act_estimates):                # trying with all samples -- invalid_est only for invalid samples
                     inval_samp = torch.cat((def_cur_loc, act_est))
@@ -149,15 +149,21 @@ class Def_A2C_GAN(nn.Module):
                     dist_estim_attempt += 1
 
                 dist_probs = action_dist(dist_estimates.detach(), act_codes)
-                ent_coeff = 1.0
-                prob_ent = sum([p*(-math.log(p)) for p in dist_probs])
+                prob_ent = - sum([p*math.log(p) for p in dist_probs if p > 0.0]) * ent
                 gl = self.disc_criterion(inval_out, true_labels)
-                gen_loss = gl + (prob_ent * ent_coeff) # + class_weight_loss # /(len(act_dist.values())**2)
+                if prob_ent > gl:
+                    gen_loss = abs(gl - gl/prob_ent) # + class_weight_loss # /(len(act_dist.values())**2)
+                elif prob_ent > 0:
+                    gen_loss = abs(gl - prob_ent)
+                else:
+                    gen_loss = gl
                 if test:
                     print("\nAttempts:", attempt)
                     print("Invalid Samples:", invalid_count)
+                    print("Gen Loss from Disc:", gl.item())
                     print("Generator Loss:", gen_loss.item())
                     print("Actions:", len(act_dist.values()))
+                    print("Entropy Loss:", prob_ent.item())
                 gen_loss.backward()
                 gen_optimizer.step()
 
@@ -168,7 +174,7 @@ class Def_A2C_GAN(nn.Module):
                 gen_ent_list.append(prob_ent.item())
 
                 # Update discriminator
-                disc_err_rate = 1.0
+                disc_err_rate = len(invalid_est) > 0
                 disc_attempt = 1
                 disc_lr = 0.001
                 while disc_err_rate > 0.2:
