@@ -1002,7 +1002,7 @@ def test():
     dist_estimator = dist_estim_obj.initial()
     discriminator = copy.deepcopy(disc)
     def_gan_list, def_utils2, atk_utils, attempts_list2, num_acts_list2, gl_list2, gen_ent_list2 \
-        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, loss=0)
+        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, rl=0)
 
     gan_time2 = round(((time.time() - start) / 60), 4)
     start = time.time()
@@ -1014,7 +1014,7 @@ def test():
     dist_estimator = dist_estim_obj.initial()
     discriminator = copy.deepcopy(disc)
     def_gan_list, def_utils3, atk_utils, attempts_list3, num_acts_list3, gl_list3, gen_ent_list3 \
-        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, loss=0.01)
+        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, rl=0.01)
 
     gan_time3 = round(((time.time() - start) / 60), 4)
     start = time.time()
@@ -1026,7 +1026,7 @@ def test():
     dist_estimator = dist_estim_obj.initial()
     discriminator = copy.deepcopy(disc)
     def_gan_list, def_utils4, atk_utils, attempts_list4, num_acts_list4, gl_list4, gen_ent_list4 \
-        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, loss=0.1)
+        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, rl=0.1)
     
     gan_time4 = round(((time.time() - start) / 60), 4)
     print("Ent 1 Runtime:", gan_time, "min")
