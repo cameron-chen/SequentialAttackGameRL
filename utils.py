@@ -8,7 +8,6 @@ import time
 from collections import namedtuple, deque
 
 from game_simulation import GameSimulation
-from sampling import gen_init_def_pos
 import configuration as config
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
