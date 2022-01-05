@@ -16,12 +16,11 @@ from utils import ReplayMemoryTransition, ReplayMemoryEpisode, GameGeneration, T
 from game_simulation import GameSimulation
 from optimization import Optimization
 import configuration as config
-from utils import Pure_Strategy
+from utils import Pure_Strategy, gen_init_def_pos, gen_next_loc, gen_all_valid_actions, gen_val_mask
 from attacker_model import Att_A2C_GCN, Att_A2C_GCN_LSTM
 from defender_discriminator import DefDiscriminator
 from def_act_gen import Def_Action_Generator
 from distribution_estimator import DistributionEstimator
-from sampling import gen_init_def_pos, gen_next_loc, gen_all_actions, gen_all_valid_actions, gen_val_mask
 
 
 class DefenderOracle(object):
@@ -751,7 +750,10 @@ class DefenderOracle(object):
                 # Perform one step of the optimization -- FIGURE OUT LOSS THAT INCLUDES ESTIMATED PROBABILITY (prob)
                 critic_loss = F.mse_loss(critic.squeeze(), def_immediate_utility)
                 advantage = abs(def_immediate_utility - critic)
-                actor_loss = -math.log(prob.detach())*advantage
+                if prob > 0:
+                    actor_loss = -math.log(prob.detach())*advantage
+                else:
+                    actor_loss = 0
                 temp_loss = critic_loss + actor_loss
                 if prob_ent > temp_loss:
                     loss = temp_loss - temp_loss/prob_ent

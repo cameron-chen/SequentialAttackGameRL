@@ -7,12 +7,11 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
-from utils import GameGeneration
+from utils import GameGeneration, check_constraints, gen_init_def_pos
 from graph_convolution import GraphConvolution
 from defender_discriminator import DefDiscriminator
 from def_act_gen import dist_est, action_dist, Def_Action_Generator
 from distribution_estimator import DistributionEstimator
-from sampling import check_move, check_constraints, gen_init_def_pos
 import configuration as config
 
 

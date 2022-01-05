@@ -6,10 +6,9 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
-from utils import GameGeneration
+from utils import GameGeneration, gen_init_def_pos
 from graph_convolution import GraphConvolution
 from def_act_gen import dist_est, Def_Action_Generator, Def_A2C_Sample_Generator
-from sampling import gen_init_def_pos
 import configuration as config
 import numpy as np
 from argparse import ArgumentParser

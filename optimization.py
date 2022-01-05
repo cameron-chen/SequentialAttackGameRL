@@ -2,8 +2,7 @@ from __future__ import print_function
 
 import torch
 import torch.nn.functional as F
-from utils import Transition, TransitionV
-from sampling import gen_all_valid_actions, gen_val_mask
+from utils import Transition, TransitionV, gen_all_valid_actions, gen_val_mask
 
 
 class Optimization(object):

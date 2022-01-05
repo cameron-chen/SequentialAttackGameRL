@@ -8,54 +8,6 @@ import configuration as config
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def check_def_constraints(def_action, def_constraints, state):
-    print(state)
-    print(def_action)
-    def_loc = set()
-    def_num = [0] * len(state)
-    for row in def_action:
-        def_res = [idx for idx,x in enumerate(row) if x > 0]
-        def_loc.update(def_res)
-        for res in def_res:
-            def_num[res] += row[res].item()
-
-    attacked_tar = set()
-    for k,tar in enumerate(state):
-        if tar[1] > 0:
-            attacked_tar.add(k)
-
-    print(def_loc)
-    print(def_num)
-    print(attacked_tar)
-    '''
-    for group in def_constraints:
-        print(group)
-        check = def_loc.intersection(set(group))
-        print(check)
-        if len(check) == 0:
-            continue
-        elif len(check) < len(group):
-            if attacked_tar.intersection(set(group)):
-                continue
-            else:
-                return False
-    '''
-    for res in def_constraints:
-        if res in def_loc:
-            if res+1 in attacked_tar and res-1 in attacked_tar:
-                continue
-            elif res+1 in def_loc or res-1 in def_loc or def_num[res] > 1:
-                continue
-            elif res == 0 and (len(def_num)-1) in def_loc:
-                continue
-            elif res == (len(def_num)-1) and 0 in def_loc:
-                continue
-            else:
-                return False
-
-    return True
-
-
 def get_suqr_probs(payoff):
     feats = []
     for target in payoff:

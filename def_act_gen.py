@@ -7,9 +7,8 @@ import matplotlib.pyplot as plt
 
 import configuration as config
 from graph_convolution import GraphConvolution
-from utils import GameGeneration
+from utils import GameGeneration, gen_init_def_pos, check_move, check_constraints
 from defender_discriminator import DefDiscriminator
-from sampling import gen_init_def_pos, check_move, check_constraints
 
 
 def get_action(act):

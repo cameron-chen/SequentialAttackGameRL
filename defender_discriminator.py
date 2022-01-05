@@ -7,9 +7,8 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
-from utils import GameGeneration
+from utils import GameGeneration, gen_samples_greedy
 from graph_convolution import GraphConvolution
-from sampling import gen_samples, gen_samples_greedy
 import configuration as config
 
 
