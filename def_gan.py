@@ -150,10 +150,10 @@ class Def_A2C_GAN(nn.Module):
                     dist_estim_attempt += 1
 
                 dist_probs = action_dist(dist_estimates.detach(), act_codes)
-                prob_ent = - sum([p*math.log(p) for p in dist_probs if p > 0.0]) * ent
+                prob_ent = -sum([p*math.log(p) for p in dist_probs if p > 0.0])*ent
                 gl = self.disc_criterion(inval_out, true_labels)
                 if prob_ent > gl:
-                    gen_loss = abs(gl - gl/prob_ent) # + class_weight_loss # /(len(act_dist.values())**2)
+                    gen_loss = gl*(1-prob_ent/10) # + class_weight_loss # /(len(act_dist.values())**2)
                 elif prob_ent > 0:
                     gen_loss = abs(gl - prob_ent)
                 else:
