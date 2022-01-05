@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import time
 import random
+import math
 import copy
 import matplotlib.pyplot as plt
 
@@ -691,19 +692,19 @@ class DefenderOracle(object):
                     print("\nGenerating Defender action...", time_step)
                     total_attempts = 0
                     if test:
-                        def_action, critic, prob, attempts, num_actions, gl, gen_ent \
+                        def_action, critic, prob, prob_ent, attempts, num_actions, gl, gen_ent \
                              = policy_net(state.unsqueeze(0), def_cur_loc, test=test, ent=ent, nc=nc)
                     else:
-                        def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc, test=test, ent=ent, nc=nc)
+                        def_action, critic, prob, prob_ent = policy_net(state.unsqueeze(0), def_cur_loc, test=test, ent=ent, nc=nc)
                     redo = 1
                     total_attempts += attempts
                     while not torch.is_tensor(def_action):
                         if test: 
                             print("Time step", time_step, ": redo", redo)
-                            def_action, critic, prob, attempts, num_actions, gl, gen_ent \
+                            def_action, critic, prob, prob_ent, attempts, num_actions, gl, gen_ent \
                                  = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
                         else:
-                            def_action, critic, prob = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
+                            def_action, critic, prob, prob_ent = policy_net(state.unsqueeze(0), def_cur_loc, test=test, nc=nc, ent=ent)
                         redo += 1
                         total_attempts += attempts
                         if total_attempts >= 50:
@@ -712,8 +713,8 @@ class DefenderOracle(object):
 
                     attempts_list.append(total_attempts)
                     num_acts_list.append(num_actions)
-                    gl_list += gl
-                    gen_ent_list += gen_ent
+                    gl_list += gl + [0,0,0]
+                    gen_ent_list += gen_ent + [0,0,0]
 
                 # -------------------------------- Start sample attacker action --------------------------------
                 if att_pure_strategy.type == 'uniform':
@@ -736,7 +737,7 @@ class DefenderOracle(object):
                 # -------------------------------- End sample attacker action --------------------------------
 
                 next_state, def_immediate_utility, att_immediate_utility \
-                    = GameSimulation.gen_next_state_from_def_res(state=state, def_action=def_action, att_action=att_action,
+                    = GameSimulation.gen_next_state_from_def_res(state=state, def_action=def_action, att_action=att_action, def_cur_loc=def_cur_loc,
                                                                     payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix)
 
                 next_att_observation = GameSimulation.gen_next_observation(observation=attacker_observation,
@@ -749,11 +750,15 @@ class DefenderOracle(object):
 
                 # Perform one step of the optimization -- FIGURE OUT LOSS THAT INCLUDES ESTIMATED PROBABILITY (prob)
                 critic_loss = F.mse_loss(critic.squeeze(), def_immediate_utility)
-                advantage = def_immediate_utility - critic
-                actor_loss = advantage*prob.detach()
-                pol_act = prob.detach()*def_action
-                entropy_term = -(pol_act * torch.log(pol_act + 1e-10)).sum()
-                loss = critic_loss + actor_loss + entropy_coeff * entropy_term
+                advantage = abs(def_immediate_utility - critic)
+                actor_loss = -math.log(prob.detach())*advantage
+                temp_loss = critic_loss + actor_loss
+                if prob_ent > temp_loss:
+                    loss = temp_loss - temp_loss/prob_ent
+                elif prob_ent > 0:
+                    loss = temp_loss - prob_ent
+                else:
+                    loss = temp_loss
 
                 if test: print(time_step, "Payoff loss:", loss.item())
                 payoff_loss.append(loss.item())
@@ -839,17 +844,17 @@ class DefenderOracle(object):
                     print("\nGenerating GAN action...", time_step)
                     total_attempts = 0
                     if test:
-                        def_action, critic, prob, attempts, num_actions = gan(state.unsqueeze(0), def_cur_loc, test=test)
+                        def_action, critic, prob, prob_ent, attempts, num_actions = gan(state.unsqueeze(0), def_cur_loc, test=test)
                     else:
-                        def_action, critic, prob = gan(state.unsqueeze(0), def_cur_loc, test=test)
+                        def_action, critic, prob, prob_ent = gan(state.unsqueeze(0), def_cur_loc, test=test)
                     redo = 1
                     total_attempts += attempts
                     while not torch.is_tensor(def_action):
                         if test: 
                             print("Time step", time_step, ": redo", redo)
-                            def_action, critic, prob, attempts, num_actions = gan(state.unsqueeze(0), def_cur_loc, test=test)
+                            def_action, critic, prob, prob_ent, attempts, num_actions = gan(state.unsqueeze(0), def_cur_loc, test=test)
                         else:
-                            def_action, critic, prob = gan(state.unsqueeze(0), def_cur_loc, test=test)
+                            def_action, critic, prob, prob_ent = gan(state.unsqueeze(0), def_cur_loc, test=test)
                         redo += 1
                         total_attempts += attempts
                         if total_attempts >= 100:
@@ -880,7 +885,7 @@ class DefenderOracle(object):
                 # -------------------------------- End sample attacker action --------------------------------
 
                 next_state, def_immediate_utility, att_immediate_utility \
-                    = GameSimulation.gen_next_state_from_def_res(state=state, def_action=def_action, att_action=att_action,
+                    = GameSimulation.gen_next_state_from_def_res(state=state, def_action=def_action, att_action=att_action, def_cur_loc=def_cur_loc,
                                                                     payoff_matrix=self.payoff_matrix, adj_matrix=self.adj_matrix)
 
                 next_att_observation = GameSimulation.gen_next_observation(observation=attacker_observation,
@@ -940,6 +945,7 @@ def test():
     def_constraints = [[1, 3], [0, 2], [4]]
     print(def_constraints)
     print(adj_matrix)
+    print(payoff_matrix)
 
     trained_att_A2C_GCN_model = Att_A2C_GCN(payoff_matrix, norm_adj_matrix, config.NUM_FEATURE).to(device)
     #path1 = "attacker_2_A2C_GCN_state_dict.pth"
@@ -989,7 +995,7 @@ def test():
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
     act_gen = Def_Action_Generator(config.NUM_TARGET, config.NUM_RESOURCE, adj_matrix, device).to(device)
     def_gan_list, def_utils, atk_utils, attempts_list, num_acts_list, gl_list, gen_ent_list \
-        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0)
+        = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, rl=0.01)
     def_gan = def_gan_list[-1][0]
 
     gan_time = round(((time.time() - start) / 60), 4)
@@ -1006,7 +1012,7 @@ def test():
 
     gan_time2 = round(((time.time() - start) / 60), 4)
     start = time.time()
-
+    '''
     print("\nTraining A2C-GCN-GAN-Generator 3")
     def_oracle_gan = DefenderOracle(att_strategy=att_mixed_strategy, payoff_matrix=payoff_matrix, adj_matrix=adj_matrix,
                                     norm_adj_matrix=norm_adj_matrix, def_constraints=def_constraints, device=device)
@@ -1027,12 +1033,12 @@ def test():
     discriminator = copy.deepcopy(disc)
     def_gan_list, def_utils4, atk_utils, attempts_list4, num_acts_list4, gl_list4, gen_ent_list4 \
         = def_oracle_gan.train(option='A2C-GCN-GAN', discriminator=discriminator, act_gen=act_gen, dist_estimator=dist_estimator, test=1, ent=1.0, rl=0.1)
-    
+    '''
     gan_time4 = round(((time.time() - start) / 60), 4)
     print("Ent 1 Runtime:", gan_time, "min")
     print("Ent 2 Runtime:", gan_time2, "min")
-    print("Ent 3 Runtime:", gan_time3, "min")
-    print("Ent 4 Runtime:", gan_time4, "min")
+    # print("Ent 3 Runtime:", gan_time3, "min")
+    # print("Ent 4 Runtime:", gan_time4, "min")
 
     '''
     # For comparing GAN with Full Action A2C (only for 6 target games)
@@ -1047,10 +1053,10 @@ def test():
     plt.title("Defender/Attacker Utilities")
     plt.xlabel("Episode")
     plt.ylabel("Utility")
-    plt.plot(def_utils, label="lr 0.001")
+    plt.plot(def_utils, label="lr 0.01")
     plt.plot(def_utils2, label="no RL loss")
-    plt.plot(def_utils3, label="lr 0.01")
-    plt.plot(def_utils4, label="lr 0.1")
+    # plt.plot(def_utils3, label="lr 0.01")
+    # plt.plot(def_utils4, label="lr 0.1")
     plt.legend()
     plt.show()
     
@@ -1058,10 +1064,10 @@ def test():
     plt.title("Defender # of Tries for Valid Action")
     plt.xlabel("Time Step")
     plt.ylabel("# of Tries")
-    plt.plot(attempts_list, label="lr 0.001")
+    plt.plot(attempts_list, label="lr 0.01")
     plt.plot(attempts_list2, label="no RL loss")
-    plt.plot(attempts_list3, label="lr 0.01")
-    plt.plot(attempts_list4, label="lr 0.1")
+    # plt.plot(attempts_list3, label="lr 0.01")
+    # plt.plot(attempts_list4, label="lr 0.1")
     plt.legend()
     plt.show()
 
@@ -1071,8 +1077,8 @@ def test():
     plt.ylabel("# of Unique Actions")
     plt.plot(num_acts_list, label="lr 0.001")
     plt.plot(num_acts_list2, label="no RL loss")
-    plt.plot(num_acts_list3, label="lr 0.01")
-    plt.plot(num_acts_list4, label="lr 0.1")
+    # plt.plot(num_acts_list3, label="lr 0.01")
+    # plt.plot(num_acts_list4, label="lr 0.1")
     plt.legend()
     plt.show()
     
@@ -1094,10 +1100,10 @@ def test():
     plt.plot(d_prob_list, label="GAN action probability in A2C distribution")
     plt.legend()
     plt.show()
-    
+    '''
     
     plt.figure(figsize=(20, 10))
-    plt.title("Disc BCE vs. Entropy from Distribution Estimator (ent 1.0)")
+    plt.title("Disc BCE vs. Entropy from Distribution Estimator")
     plt.xlabel("Iteration")
     plt.ylabel("Value")
     plt.plot(gl_list, label="Discriminator BCE Loss")
@@ -1113,7 +1119,7 @@ def test():
     plt.plot(gen_ent_list2, label="Distribution Estimator Entropy")
     plt.legend()
     plt.show()
-    '''
+    
     '''
     plt.figure(figsize=(20, 10))
     plt.title("Disc BCE vs. Entropy from Distribution Estimator (ent 1.1)")

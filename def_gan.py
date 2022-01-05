@@ -74,12 +74,13 @@ class Def_A2C_GAN(nn.Module):
         gen_ent_list = []
         disc_loss_list = []
         dist_estim_loss_list = []
-        gen_lr = 0.05
+        gen_lr = 0.1
         disc_lr = 0.001
-        dist_estim_lr = 0.001
+        dist_estim_lr = 0.005
         gen_optimizer = optim.Adam(self.act_gen.parameters(), gen_lr)
         disc_optimizer = optim.Adam(self.discriminator.parameters(), disc_lr)
         dist_estim_optimizer = optim.Adam(self.dist_estimator.parameters(), dist_estim_lr)
+        prob_ent = 0
         while not action_generated:
             gen_optimizer.zero_grad()
             act_estimates = self.act_gen(x.detach().squeeze(), def_cur_loc)
@@ -209,16 +210,16 @@ class Def_A2C_GAN(nn.Module):
                 print("Actions:", len(act_dist.values()), "\n")
                 action_generated = True
 
-            gen_lr = gen_lr * 0.99
+            gen_lr = gen_lr * 0.9
             for param_group in gen_optimizer.param_groups:
                 param_group['lr'] = gen_lr
 
             if attempt > 25 and invalid_count >= invalid_list[-2]:
                 prob = torch.tensor(1/len(act_dist.values()))
                 if test:
-                    return 0, state_value, prob, attempt, len(act_dist.values()), gl_list, gen_ent_list
+                    return 0, state_value, prob, prob_ent, attempt, len(act_dist.values()), gl_list, gen_ent_list
                 else:
-                    return 0, state_value, prob
+                    return 0, state_value, prob, prob_ent
 
         # Update Distribution Estimator
         dist_estim_attempt = 1
@@ -256,10 +257,17 @@ class Def_A2C_GAN(nn.Module):
                     print("Actual Probability:", act_probs[i].item())
                 break
 
+        if not prob_ent:
+            dist_probs = action_dist(dist_estimates.detach(), act_codes)
+            prob_ent = -sum([p*math.log(p) for p in dist_probs if p > 0.0])*ent
+        
+        gl_list.append(0)
+        gen_ent_list.append(0)    
+
         if test:
-            return select_act, state_value, select_prob, attempt, len(act_dist.values()), gl_list, gen_ent_list
+            return select_act, state_value, select_prob, prob_ent, attempt, len(act_dist.values()), gl_list, gen_ent_list
         else:
-            return select_act, state_value, select_prob
+            return select_act, state_value, select_prob, prob_ent
 
 
 if __name__ == '__main__':

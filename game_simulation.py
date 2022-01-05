@@ -373,7 +373,7 @@ class GameSimulation(object):
         return def_action
 
     @staticmethod
-    def gen_next_state_from_def_res(state, def_action, att_action, payoff_matrix, adj_matrix):
+    def gen_next_state_from_def_res(state, def_action, att_action, def_cur_loc, payoff_matrix, adj_matrix):
         # Defender resource is not destroyed if it meets an attack
         num_target = payoff_matrix.size(0)
         num_resource = def_action.size(0)
@@ -400,11 +400,13 @@ class GameSimulation(object):
                     att_immediate_utility = payoff_matrix[t, 2].clone()
                 break
 
+        # Calculating Defender movement cost
         is_start = state[:, 1].sum()
         for t in range(num_target):
             for tprime in range(num_resource):
-                if def_action[tprime, t] >= 1 and is_start > 0:
-                    def_immediate_utility += (adj_matrix[tprime, t] * def_action[tprime, t])
+                if def_action[tprime, t] >= 1 and def_cur_loc[tprime, t] < 1 and is_start > 0:
+                    prev_loc = torch.nonzero(def_cur_loc[tprime])[0].item()
+                    def_immediate_utility += (adj_matrix[tprime, prev_loc] * def_action[tprime, t])
 
         return next_state, def_immediate_utility, att_immediate_utility
 
